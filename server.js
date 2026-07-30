@@ -1625,6 +1625,36 @@ async function handleSalesTreatersUpdate(request, response) {
       const index = state.channels.findIndex((item) => item.id === String(payload.id || ''));
       if (index < 0) return sendJson(response, 404, { error: 'Canal não encontrado.' });
       state.channels.splice(index, 1);
+    } else if (payload.action === 'record-treatment') {
+      const channel = state.channels.find((item) => item.id === String(payload.id || ''));
+      if (!channel) return sendJson(response, 404, { error: 'Canal nao encontrado.' });
+      const month = normalizeMonth(payload.month);
+      const year = Math.trunc(Number(payload.year));
+      const rowCount = Math.max(0, Math.trunc(Number(payload.rowCount) || 0));
+      const isoDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+      if (!month) return sendJson(response, 400, { error: 'Informe a competencia do relatorio.' });
+      const firstDate = isoDate(payload.firstDate);
+      const lastDate = isoDate(payload.lastDate);
+      const resolvedYear = year >= 2000 && year <= 2200
+        ? year
+        : Number((firstDate || lastDate || new Date().toISOString()).slice(0, 4));
+      const history = Array.isArray(channel.treatmentHistory) ? channel.treatmentHistory : [];
+      const record = {
+        month,
+        year: resolvedYear,
+        rowCount,
+        firstDate,
+        lastDate,
+        sourceFile: String(payload.sourceFile || '').trim().slice(0, 260),
+        missingCostSkus: Math.max(0, Math.trunc(Number(payload.missingCostSkus) || 0)),
+        uploadedAt: new Date().toISOString()
+      };
+      const existingIndex = history.findIndex((item) => String(item.month) === month && Number(item.year) === resolvedYear);
+      if (existingIndex >= 0) history[existingIndex] = record; else history.push(record);
+      channel.treatmentHistory = history
+        .sort((a, b) => Number(a.year) - Number(b.year) || Number(a.month) - Number(b.month))
+        .slice(-120);
+      channel.updatedAt = new Date().toISOString();
     } else {
       return sendJson(response, 400, { error: 'Ação inválida para o tratador de vendas.' });
     }

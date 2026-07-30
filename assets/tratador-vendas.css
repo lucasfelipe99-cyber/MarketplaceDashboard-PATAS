@@ -18,6 +18,16 @@
 .treat-list button.primary,#treatChannelForm button{background:var(--accent);color:#fff}
 .treat-list button.danger{color:var(--danger)}
 .treat-status{grid-column:1/-1;padding-top:7px;border-top:1px solid var(--border)}
+.treat-history{grid-column:1/-1;border-top:1px solid var(--border);padding-top:12px;display:grid;gap:9px}
+.treat-history-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.treat-history-title strong{font-size:12px}.treat-history-title small,.treat-history-empty{color:var(--text-muted);font-size:10px}
+.treat-history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
+.treat-history-item{display:grid;gap:3px;border:1px solid var(--border);border-radius:9px;background:var(--surface-strong);padding:10px 12px}.treat-history-item b{color:var(--accent);font-size:12px}.treat-history-item span{font-size:11px}.treat-history-item small{color:var(--text-muted);font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.treat-history-year{display:grid;gap:7px}.treat-history-year>strong{font-size:11px;color:var(--text-muted)}
+.treat-history-item.pending{opacity:.62;border-style:dashed}.treat-history-item.pending b{color:var(--text-muted)}.treat-history-item.done{border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.treat-history{grid-column:1/-1;border-top:1px solid var(--border);padding-top:12px;display:grid;gap:9px}
+.treat-history-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.treat-history-title strong{font-size:12px}.treat-history-title small,.treat-history-empty{color:var(--text-muted);font-size:10px}
+.treat-history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
+.treat-history-item{display:grid;gap:3px;border:1px solid var(--border);border-radius:9px;background:var(--surface-strong);padding:10px 12px}.treat-history-item b{color:var(--accent);font-size:12px}.treat-history-item span{font-size:11px}.treat-history-item small{color:var(--text-muted);font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .treat-password{display:flex;align-items:center;justify-content:flex-end;gap:10px;color:var(--text-muted);font-size:11px}
 .treat-empty{text-align:center;color:var(--text-muted)}
 @media(max-width:1200px){#treatChannelForm{grid-template-columns:1fr 1fr 1fr}.treat-list article{grid-template-columns:1fr 1fr 1fr}.treat-channel{grid-column:1/-1}}
