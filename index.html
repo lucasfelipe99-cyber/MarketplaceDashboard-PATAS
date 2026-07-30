@@ -6,6 +6,12 @@
   <title>Marketplace Dashboard</title>
   <script>
     try {
+      const dataResetVersion = '2026-07-29-clean-start-2';
+      if (localStorage.getItem('marketplaceDataResetVersion') !== dataResetVersion) {
+        localStorage.clear();
+        sessionStorage.clear();
+        localStorage.setItem('marketplaceDataResetVersion', dataResetVersion);
+      }
       document.documentElement.dataset.theme = localStorage.getItem('marketplaceTheme') || 'dark';
     } catch (error) {
       document.documentElement.dataset.theme = 'dark';
@@ -4584,8 +4590,8 @@
 
 
 </style>
-  <link rel="stylesheet" href="/assets/fechamento.css?v=7">
-  <link rel="stylesheet" href="/assets/vendas-upload.css?v=1">
+  <link rel="stylesheet" href="/assets/fechamento.css?v=9">
+  <link rel="stylesheet" href="/assets/vendas-upload.css?v=2-20260729">
 </head>
 <body>
   <main class="page">
@@ -4667,9 +4673,6 @@
           <span class="nav-label">Análises</span>
         </button>
         <div class="nav-section-items" id="analysisNavItems" hidden>
-        <button class="tab-button" type="button" data-tab="salesUploadPanel"><span class="nav-icon" aria-hidden="true">↑</span><span class="nav-label">Subir Base de Vendas</span></button>
-        <button class="tab-button" type="button" data-tab="productCategoriesPanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Categorias de Produto</span></button>
-        <button class="tab-button" type="button" data-tab="skuCatalogPanel"><span class="nav-icon" aria-hidden="true">S</span><span class="nav-label">Cadastro de SKU</span></button>
         <button class="tab-button active" type="button" data-tab="dataPanel"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg></span><span class="nav-label">Base de dados</span></button>
         <button class="tab-button" type="button" data-tab="dashboardPanel"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="4" rx="1"></rect><rect x="14" y="11" width="7" height="10" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg></span><span class="nav-label">Marketplace Dashboard</span></button>
         <button class="tab-button" type="button" data-tab="macroPanel"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10"></path><path d="M10 20V4"></path><path d="M16 20v-7"></path><path d="M22 20H2"></path></svg></span><span class="nav-label">Dashboard Macro</span></button>
@@ -4688,8 +4691,20 @@
         <button class="tab-button" type="button" data-tab="cashFlowPanel"><span class="nav-icon" aria-hidden="true">₿</span><span class="nav-label">Fluxo de Caixa</span></button>
         <button class="tab-button" type="button" data-tab="cashSummaryPanel"><span class="nav-icon" aria-hidden="true">Σ</span><span class="nav-label">Resumo do Fluxo</span></button>
         <button class="tab-button" type="button" data-tab="drePanel"><span class="nav-icon" aria-hidden="true">D</span><span class="nav-label">DRE Financeira</span></button>
+        <button class="tab-button" type="button" data-tab="budgetEditorPanel"><span class="nav-icon" aria-hidden="true">✎</span><span class="nav-label">Cadastro de Orçamento</span></button>
         <button class="tab-button" type="button" data-tab="budgetPanel"><span class="nav-icon" aria-hidden="true">%</span><span class="nav-label">Orçado x Realizado</span></button>
         <button class="tab-button" type="button" data-tab="mappingPanel"><span class="nav-icon" aria-hidden="true">⇄</span><span class="nav-label">De-Para Financeiro</span></button>
+        </div>
+
+        <button class="sidebar-section-toggle" type="button" aria-expanded="false" aria-controls="accountsNavItems">
+          <span class="sidebar-section-icon" aria-hidden="true">›</span>
+          <span class="nav-label">Contas</span>
+        </button>
+        <div class="nav-section-items" id="accountsNavItems" hidden>
+          <button class="tab-button" type="button" data-tab="payablesPanel"><span class="nav-icon" aria-hidden="true">P</span><span class="nav-label">Contas a Pagar</span></button>
+          <button class="tab-button" type="button" data-tab="receivablesPanel"><span class="nav-icon" aria-hidden="true">R</span><span class="nav-label">Contas a Receber</span></button>
+          <button class="tab-button" type="button" data-tab="counterpartiesPanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Clientes e Fornecedores</span></button>
+          <button class="tab-button" type="button" data-tab="financialConfigPanel"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Configurações Financeiras</span></button>
         </div>
 
         <button class="sidebar-section-toggle" type="button" aria-expanded="false" aria-controls="inventoryNavItems">
@@ -4699,6 +4714,7 @@
         <div class="nav-section-items" id="inventoryNavItems" hidden>
           <button class="tab-button" type="button" data-tab="inventoryEntriesPanel"><span class="nav-icon" aria-hidden="true">E</span><span class="nav-label">Entradas de Estoque</span></button>
           <button class="tab-button" type="button" data-tab="inventoryAveragePanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Custo Médio</span></button>
+          <button class="tab-button" type="button" data-tab="inventoryFullPanel"><span class="nav-icon" aria-hidden="true">F</span><span class="nav-label">Estoque Full</span></button>
         </div>
 
         <button class="sidebar-section-toggle" type="button" aria-expanded="false" aria-controls="pricingNavItems">
@@ -4709,6 +4725,19 @@
           <button class="tab-button" type="button" data-tab="pricingCalculatorPanel"><span class="nav-icon" aria-hidden="true">R$</span><span class="nav-label">Calculadora</span></button>
           <button class="tab-button" type="button" data-tab="pricingCostPanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Cadastro de Custos</span></button>
           <button class="tab-button" type="button" data-tab="pricingRulesPanel"><span class="nav-icon" aria-hidden="true">%</span><span class="nav-label">Regras dos Marketplaces</span></button>
+        </div>
+
+        <button class="sidebar-section-toggle protected-section-toggle" id="configurationNavToggle" type="button" aria-expanded="false" aria-controls="configurationNavItems">
+          <span class="sidebar-section-icon" aria-hidden="true">›</span>
+          <span class="nav-label">Configuração 🔒</span>
+        </button>
+        <div class="nav-section-items" id="configurationNavItems" hidden>
+          <button class="tab-button" type="button" data-tab="salesUploadPanel"><span class="nav-icon" aria-hidden="true">↑</span><span class="nav-label">Subir Base de Vendas</span></button>
+          <button class="tab-button" type="button" data-tab="salesTreatersPanel"><span class="nav-icon" aria-hidden="true">T</span><span class="nav-label">Tratador de Vendas</span></button>
+          <button class="tab-button" type="button" data-tab="productCategoriesPanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Categorias de Produto</span></button>
+          <button class="tab-button" type="button" data-tab="skuCatalogPanel"><span class="nav-icon" aria-hidden="true">S</span><span class="nav-label">Cadastro de SKU</span></button>
+          <button class="tab-button" type="button" data-tab="forecastPanel"><span class="nav-icon" aria-hidden="true">F</span><span class="nav-label">Forecast de Vendas</span></button>
+          <button class="tab-button" type="button" data-tab="adsUploadPanel"><span class="nav-icon" aria-hidden="true">A</span><span class="nav-label">Subir Base de ADS</span></button>
         </div>
       </nav>
       <div class="sidebar-footnote"><span class="sidebar-status-dot"></span><span>Sistema conectado</span></div>
@@ -4724,6 +4753,10 @@
           </div>
           <span class="sales-upload-badge">VENDAS → Base de Dados</span>
         </div>
+        <div class="sales-upload-source-choice" aria-label="Origem da base de vendas">
+          <button id="salesUseCurrentFile" class="active" type="button"><strong>Subir arquivo atual</strong><span>Selecionar um RESUMO_VENDAS_E_VARIAÇÃO do computador</span></button>
+          <button id="salesUseTreatedBase" type="button" disabled><strong>Usar base tratada pelo sistema</strong><span>Continuar com o resumo preparado no Tratador de Vendas</span></button>
+        </div>
         <div class="sales-upload-grid">
           <section class="sales-upload-card">
             <label class="sales-upload-drop" for="salesIntegrationFile">
@@ -4733,7 +4766,7 @@
               <input id="salesIntegrationFile" type="file" accept=".xlsx,.xls,.csv">
             </label>
             <label class="sales-upload-password">Senha de publicação
-              <input id="salesIntegrationPassword" type="password" autocomplete="current-password" value="152535" placeholder="Informe a senha administrativa">
+              <input id="salesIntegrationPassword" type="password" autocomplete="current-password" placeholder="Informe a senha administrativa">
             </label>
             <div class="sales-upload-actions">
               <button id="salesIntegrationPreview" type="button">Ler e conferir arquivo</button>
@@ -4748,9 +4781,15 @@
         <section class="sales-upload-card sales-upload-results" id="salesIntegrationResults" hidden></section>
       </div>
     </section>
+    <section class="tab-panel" id="salesTreatersPanel"><div id="salesTreatersContainer"></div></section>
+    <section class="tab-panel" id="adsUploadPanel"><div id="adsUploadContainer"></div></section>
 
     <section class="tab-panel" id="productCategoriesPanel">
       <div id="productCategoriesContainer"></div>
+    </section>
+
+    <section class="tab-panel" id="forecastPanel" style="padding:0;overflow:hidden">
+      <iframe id="forecastFrame" title="Forecast de Vendas" src="/assets/forecast.html?v=6" style="width:100%;height:calc(100vh - 92px);border:0;border-radius:14px;background:#07131d"></iframe>
     </section>
 
     <section class="tab-panel" id="skuCatalogPanel">
@@ -4764,6 +4803,8 @@
     <section class="tab-panel" id="inventoryAveragePanel">
       <div id="inventoryAverageContainer"></div>
     </section>
+
+    <section class="tab-panel" id="inventoryFullPanel"></section>
 
     <section class="tab-panel" id="pricingCalculatorPanel">
       <div id="pricingCalculatorContainer"></div>
@@ -4835,8 +4876,13 @@
     <section class="tab-panel fechamento-panel" id="cashFlowPanel"><div id="cashFlowContainer"></div></section>
     <section class="tab-panel fechamento-panel" id="cashSummaryPanel"><div id="cashSummaryContainer"></div></section>
     <section class="tab-panel fechamento-panel" id="drePanel"><div id="dreContainer"></div></section>
+    <section class="tab-panel fechamento-panel" id="budgetEditorPanel"><div id="budgetEditorContainer"></div></section>
     <section class="tab-panel fechamento-panel" id="budgetPanel"><div id="budgetContainer"></div></section>
     <section class="tab-panel fechamento-panel" id="mappingPanel"><div id="mappingContainer"></div></section>
+    <section class="tab-panel accounts-panel" id="payablesPanel"><div id="payablesContainer"></div></section>
+    <section class="tab-panel accounts-panel" id="receivablesPanel"><div id="receivablesContainer"></div></section>
+    <section class="tab-panel accounts-panel" id="counterpartiesPanel"><div id="counterpartiesContainer"></div></section>
+    <section class="tab-panel accounts-panel" id="financialConfigPanel"><div id="financialConfigContainer"></div></section>
 
   </main>
 
@@ -4859,6 +4905,22 @@
       <div class="modal-actions">
         <button class="modal-button secondary" id="closeAdminButton" type="button">Cancelar</button>
         <button class="modal-button" id="publishBaseButton" type="button">Publicar base</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="configurationAccessModal" aria-hidden="true">
+    <section class="admin-modal" aria-label="Acessar configurações">
+      <h2>Acessar Configuração</h2>
+      <p class="modal-message">Informe a senha administrativa para abrir as configurações.</p>
+      <label class="modal-field">
+        Senha
+        <input id="configurationPasswordInput" type="password" autocomplete="current-password" placeholder="Digite a senha">
+      </label>
+      <p class="modal-message" id="configurationAccessMessage"></p>
+      <div class="modal-actions">
+        <button class="modal-button secondary" id="cancelConfigurationAccess" type="button">Cancelar</button>
+        <button class="modal-button" id="confirmConfigurationAccess" type="button">Acessar</button>
       </div>
     </section>
   </div>
@@ -4927,6 +4989,13 @@
     const adminMonthSelect = document.getElementById('adminMonthSelect');
     const adminFileInput = document.getElementById('adminFileInput');
     const adminModalMessage = document.getElementById('adminModalMessage');
+    const configurationNavToggle = document.getElementById('configurationNavToggle');
+    const configurationNavItems = document.getElementById('configurationNavItems');
+    const configurationAccessModal = document.getElementById('configurationAccessModal');
+    const configurationPasswordInput = document.getElementById('configurationPasswordInput');
+    const configurationAccessMessage = document.getElementById('configurationAccessMessage');
+    const cancelConfigurationAccess = document.getElementById('cancelConfigurationAccess');
+    const confirmConfigurationAccess = document.getElementById('confirmConfigurationAccess');
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabPanels = document.querySelectorAll('.tab-panel');
     const pageTitle = document.getElementById('pageTitle');
@@ -5049,8 +5118,16 @@
       });
     });
 
+    if (sessionStorage.getItem('configurationUnlocked') === 'true') {
+      configurationNavToggle.querySelector('.nav-label').textContent = 'Configuração 🔓';
+    }
+
     document.querySelectorAll('.sidebar-section-toggle').forEach(function (toggle) {
       toggle.addEventListener('click', function () {
+        if (toggle === configurationNavToggle && sessionStorage.getItem('configurationUnlocked') !== 'true') {
+          openConfigurationAccess();
+          return;
+        }
         const target = document.getElementById(toggle.getAttribute('aria-controls'));
         const opening = toggle.getAttribute('aria-expanded') !== 'true';
 
@@ -5059,6 +5136,12 @@
           target.hidden = !opening;
         }
       });
+    });
+
+    cancelConfigurationAccess.addEventListener('click', closeConfigurationAccess);
+    confirmConfigurationAccess.addEventListener('click', unlockConfigurationAccess);
+    configurationPasswordInput.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') unlockConfigurationAccess();
     });
 
     renderMonthTabs();
@@ -5968,6 +6051,57 @@
       adminModal.classList.add('active');
       adminModal.setAttribute('aria-hidden', 'false');
       adminPasswordInput.focus();
+    }
+
+    function openConfigurationAccess() {
+      configurationAccessMessage.textContent = '';
+      configurationAccessMessage.className = 'modal-message';
+      configurationPasswordInput.value = '';
+      configurationAccessModal.classList.add('active');
+      configurationAccessModal.setAttribute('aria-hidden', 'false');
+      setTimeout(function () { configurationPasswordInput.focus(); }, 0);
+    }
+
+    function closeConfigurationAccess() {
+      configurationAccessModal.classList.remove('active');
+      configurationAccessModal.setAttribute('aria-hidden', 'true');
+      configurationPasswordInput.value = '';
+      configurationAccessMessage.textContent = '';
+    }
+
+    async function unlockConfigurationAccess() {
+      const password = configurationPasswordInput.value;
+      if (!password) {
+        configurationAccessMessage.textContent = 'Informe a senha.';
+        configurationAccessMessage.className = 'modal-message error';
+        return;
+      }
+
+      confirmConfigurationAccess.disabled = true;
+      confirmConfigurationAccess.textContent = 'Validando...';
+      configurationAccessMessage.textContent = '';
+      try {
+        const response = await fetch('/api/admin/validate', {
+          method: 'POST',
+          headers: { 'X-Admin-Password': password }
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(function () { return {}; });
+          throw new Error(payload.error || 'Senha inválida.');
+        }
+        sessionStorage.setItem('configurationUnlocked', 'true');
+        configurationNavToggle.querySelector('.nav-label').textContent = 'Configuração 🔓';
+        configurationNavToggle.setAttribute('aria-expanded', 'true');
+        configurationNavItems.hidden = false;
+        closeConfigurationAccess();
+      } catch (error) {
+        configurationAccessMessage.textContent = error.message || 'Não foi possível validar a senha.';
+        configurationAccessMessage.className = 'modal-message error';
+        configurationPasswordInput.select();
+      } finally {
+        confirmConfigurationAccess.disabled = false;
+        confirmConfigurationAccess.textContent = 'Acessar';
+      }
     }
 
     function closeAdminModal() {
@@ -8365,7 +8499,7 @@
         '',
         '*Pr\u00f3xima a\u00e7\u00e3o:* ' + getWhatsAppRecommendedAction(analysis, analytics),
         '',
-        '_Dados realizados at\u00e9 ' + (period.asOfDate || 'data n\u00e3o identificada') + ' | Regra D-1 | Comparativo com MTD Forecast._'
+        '_Dados realizados at\u00e9 ' + (period.asOfDate || 'data n\u00e3o identificada') + ' | Forecast somado nos mesmos dias alimentados | Comparativo com MTD Forecast._'
       ].join('\n');
     }
 
@@ -8474,7 +8608,7 @@
 
       context.fillStyle = '#7f94b3';
       context.font = '20px Arial';
-      context.fillText('Dados at\u00e9 ' + (period.asOfDate || 'data n\u00e3o identificada') + ' \u2022 Regra D-1', 82, 943);
+      context.fillText('Dados at\u00e9 ' + (period.asOfDate || 'data n\u00e3o identificada') + ' \u2022 Forecast nos mesmos dias alimentados', 82, 943);
       context.fillStyle = '#4f8cff';
       context.fillRect(82, 967, 180, 5);
       return canvas;
@@ -8547,9 +8681,9 @@
       title.textContent = 'Como o comparativo foi calculado';
       if (periodContext.previousComparisonMethod === 'estimated_daily_average') {
         text.textContent = 'Como não há histórico diário confiável antes de 01/06/2026, o período anterior foi estimado pela média diária do mês completo: faturamento total do mês anterior ÷ quantidade de dias do mês anterior × '
-          + reportDay + ' dia(s) de MTD Forecast. O MTD Forecast segue o D-1 do calendário, e os percentuais dos cards utilizam essa estimativa como base.';
+          + reportDay + ' dia(s) de MTD Forecast. O MTD Forecast soma diretamente os mesmos dias existentes na base diária do Actual, e os percentuais dos cards utilizam esse total como base.';
       } else {
-        text.textContent = 'O período atual foi comparado com os dados reais do mesmo número de dias do período anterior. O mês permanece em aberto e todos os valores realizados seguem a regra D-1.';
+        text.textContent = 'O período atual foi comparado com os dados reais do mesmo número de dias do período anterior. O mês permanece em aberto e o MTD Forecast considera somente a quantidade de dias alimentados no Actual.';
       }
       note.appendChild(title);
       note.appendChild(text);
@@ -8631,10 +8765,10 @@
       meta.className = 'intelligent-meta';
       [
         'Realizado até ' + (periodContext.asOfDate || 'data não identificada'),
-        'MTD Forecast: D-' + (periodContext.mtdDay || periodContext.reportDay || 0) + '/' + (periodContext.calendarDays || 0),
+        'MTD Forecast: ' + (periodContext.mtdDay || periodContext.reportDay || 0) + ' dia(s) alimentado(s)',
         periodContext.dataLagDays > 0
           ? 'Base com ' + periodContext.dataLagDays + ' dia(s) de defasagem'
-          : 'Base atualizada até o D-1 esperado',
+          : 'Base atualizada nos dias identificados',
         'Comparação: ' + (periodContext.comparisonRule || 'período equivalente'),
         'Histórico: ' + ((analytics.availableMonths || []).join(', ') || 'indisponível'),
         'Gerado em ' + formatAiGeneratedAt(result.generatedAt),
@@ -12271,12 +12405,16 @@
       const actualIndex = dashboardState.headers.indexOf(dashboardState.actualColumn);
 
       if (dateIndex < 0) {
-        return { rows: [], startDate: '', endDate: '' };
+        return { rows: [], startDate: '', endDate: '', factor: 0 };
       }
 
       let latestActualDate = '';
+      const actualDates = new Set();
+      const sourceRows = dashboardState.dataRows && dashboardState.dataRows.length
+        ? dashboardState.dataRows
+        : rows;
 
-      rows.forEach(function (row) {
+      sourceRows.forEach(function (row) {
         const isActualRow = scenarioIndex >= 0
           ? isActualDatatype(row[scenarioIndex])
           : actualIndex < 0 || (parseNumber(row[actualIndex]) || 0) !== 0;
@@ -12289,23 +12427,34 @@
         if (isoDate && isoDate > latestActualDate) {
           latestActualDate = isoDate;
         }
+        if (isoDate) {
+          actualDates.add(isoDate);
+        }
       });
 
       if (!latestActualDate) {
-        return { rows: [], startDate: '', endDate: '' };
+        return { rows: [], startDate: '', endDate: '', factor: 0 };
       }
 
       const startDate = latestActualDate.slice(0, 7) + '-01';
-      const forecastRows = rows.filter(function (row) {
+      const actualDaysLoaded = Array.from(actualDates).filter(function (isoDate) {
+        return isoDate.slice(0, 7) === latestActualDate.slice(0, 7);
+      }).length;
+      const allForecastRows = rows.filter(function (row) {
         if (scenarioIndex >= 0 && !isForecastDatatype(row[scenarioIndex])) {
           return false;
         }
-
-        const isoDate = getRowIsoDate(row, dateIndex);
-        return isoDate && isoDate >= startDate && isoDate <= latestActualDate;
+        return scenarioIndex >= 0 || Boolean(getRowIsoDate(row, dateIndex));
+      });
+      const forecastDates = Array.from(new Set(allForecastRows.map(function (row) {
+        return getRowIsoDate(row, dateIndex);
+      }).filter(Boolean))).sort();
+      const selectedForecastDates = new Set(forecastDates.slice(0, actualDaysLoaded));
+      const forecastRows = allForecastRows.filter(function (row) {
+        return selectedForecastDates.has(getRowIsoDate(row, dateIndex));
       });
 
-      return { rows: forecastRows, startDate: startDate, endDate: latestActualDate };
+      return { rows: forecastRows, startDate: startDate, endDate: latestActualDate, factor: 1 };
     }
 
     function getRowIsoDate(row, dateIndex) {
@@ -12445,7 +12594,7 @@
     }
 
     /*
-      O MTD Forecast usa D-1 no padrão Brasil.
+      O MTD Forecast soma os dias do forecast diário correspondentes à quantidade de dias alimentados no Actual.
       Exemplo: em 28/04/2026, o relatório usa 27 dias realizados.
     */
     function getMtdReportDay() {
@@ -13188,8 +13337,8 @@
     /*
       Cria a tabela de SKU e anúncio vinculada aos mesmos filtros do dashboard.
     */
-    function buildComparisonSkuDetails(model){const columns=getSkuDetailColumns();if(!columns)return[];const previous=buildSkuDetails(model.previousRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn),current=buildSkuDetails(model.currentRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn);return mergeComparisonDetails(previous,current,function(item){return item.marketplaceSale+'||'+item.sku+'||'+item.ad;},function(base,previousItem,currentItem){base.marketplaceSale=(currentItem||previousItem).marketplaceSale;base.sku=(currentItem||previousItem).sku;base.ad=(currentItem||previousItem).ad;return base;}).sort(function(a,b){return Math.abs(b.gmVariation)-Math.abs(a.gmVariation);});}
-    function buildComparisonAdvertisingDetails(model){const columns=getAdvertisingDetailColumns();if(!columns)return[];const previous=buildAdvertisingDetails(model.previousRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn,columns.subcategoryColumn),current=buildAdvertisingDetails(model.currentRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn,columns.subcategoryColumn);return mergeComparisonDetails(previous,current,function(item){return item.marketplaceSale+'||'+item.sku+'||'+item.ad;},function(base,previousItem,currentItem){base.marketplaceSale=(currentItem||previousItem).marketplaceSale;base.sku=(currentItem||previousItem).sku;base.ad=(currentItem||previousItem).ad;base.previousAdvertising=previousItem?previousItem.advertising||0:0;base.currentAdvertising=currentItem?currentItem.advertising||0:0;base.advertisingVariation=base.currentAdvertising-base.previousAdvertising;base.previousTacos=previousItem?previousItem.tacos||0:0;base.currentTacos=currentItem?currentItem.tacos||0:0;base.tacosVariation=base.currentTacos-base.previousTacos;return base;}).filter(function(item){return Math.abs(item.previousAdvertising)>0||Math.abs(item.currentAdvertising)>0;}).sort(function(a,b){return Math.abs(b.advertisingVariation)-Math.abs(a.advertisingVariation);});}
+    function buildComparisonSkuDetails(model){const columns=getSkuDetailColumns();if(!columns)return[];const previous=buildSkuDetails(model.previousRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn),current=buildSkuDetails(model.currentRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn);return mergeComparisonDetails(previous,current,function(item){return normalizeText(item.sku)+'||'+normalizeText(item.ad);},function(base,previousItem,currentItem){base.marketplaceSale=(currentItem||previousItem).marketplaceSale;base.sku=(currentItem||previousItem).sku;base.ad=(currentItem||previousItem).ad;return base;}).sort(function(a,b){return Math.abs(b.gmVariation)-Math.abs(a.gmVariation);});}
+    function buildComparisonAdvertisingDetails(model){const columns=getAdvertisingDetailColumns();if(!columns)return[];const previous=buildAdvertisingDetails(model.previousRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn,columns.subcategoryColumn),current=buildAdvertisingDetails(model.currentRows,columns.marketplaceSaleColumn,columns.skuColumn,columns.adColumn,columns.subcategoryColumn);return mergeComparisonDetails(previous,current,function(item){return normalizeText(item.sku)+'||'+normalizeText(item.ad);},function(base,previousItem,currentItem){base.marketplaceSale=(currentItem||previousItem).marketplaceSale;base.sku=(currentItem||previousItem).sku;base.ad=(currentItem||previousItem).ad;base.previousAdvertising=previousItem?previousItem.advertising||0:0;base.currentAdvertising=currentItem?currentItem.advertising||0:0;base.advertisingVariation=base.currentAdvertising-base.previousAdvertising;base.previousTacos=previousItem?previousItem.tacos||0:0;base.currentTacos=currentItem?currentItem.tacos||0:0;base.tacosVariation=base.currentTacos-base.previousTacos;return base;}).filter(function(item){return Math.abs(item.previousAdvertising)>0||Math.abs(item.currentAdvertising)>0;}).sort(function(a,b){return Math.abs(b.advertisingVariation)-Math.abs(a.advertisingVariation);});}
     function mergeComparisonDetails(previous,current,getKey,decorate){const map=new Map();(previous||[]).forEach(function(item){map.set(getKey(item),{previousItem:item,currentItem:null});});(current||[]).forEach(function(item){const key=getKey(item),entry=map.get(key)||{previousItem:null,currentItem:null};entry.currentItem=item;map.set(key,entry);});return Array.from(map.values()).map(function(entry){const previousItem=entry.previousItem,currentItem=entry.currentItem,base={previousRevenue:previousItem?previousItem.revenue||0:0,currentRevenue:currentItem?currentItem.revenue||0:0,previousGm:previousItem?previousItem.gm||0:0,currentGm:currentItem?currentItem.gm||0:0,previousGmPercent:previousItem?previousItem.gmPercent||0:0,currentGmPercent:currentItem?currentItem.gmPercent||0:0};base.revenueVariation=base.currentRevenue-base.previousRevenue;base.gmVariation=base.currentGm-base.previousGm;base.gmPercentVariation=base.currentGmPercent-base.previousGmPercent;return decorate(base,previousItem,currentItem);});}
     function createComparisonSkuDetailsCard(model){const card=document.createElement('section'),scroll=document.createElement('div'),table=document.createElement('table'),thead=document.createElement('thead'),tbody=document.createElement('tbody'),details=model.skuDetails||[],page=getPaginatedItems(details,'sku');card.className='dashboard-card sku-table-card';scroll.className='sku-table-scroll';table.className='sku-table comparison-detail-table';thead.innerHTML='<tr><th>Marketplace venda</th><th>SKU</th><th>Anuncio</th><th>Fat. B</th><th>Fat. A</th><th>Var. Fat.</th><th>GM B</th><th>GM A</th><th>Var. GM</th><th>GM% B</th><th>GM% A</th><th>Var. p.p.</th></tr>';if(!details.length)tbody.innerHTML='<tr><td colspan="12">Sem dados de SKU para os periodos selecionados.</td></tr>';page.items.forEach(function(item){const tr=document.createElement('tr');tr.innerHTML='<td>'+escapeHtml(item.marketplaceSale)+'</td><td>'+escapeHtml(item.sku)+'</td><td>'+escapeHtml(item.ad)+'</td><td>'+formatCurrency(item.previousRevenue)+'</td><td>'+formatCurrency(item.currentRevenue)+'</td><td class="'+getSignedClass(item.revenueVariation)+'">'+formatCurrency(item.revenueVariation)+'</td><td class="'+getSignedClass(item.previousGm)+'">'+formatCurrency(item.previousGm)+'</td><td class="'+getSignedClass(item.currentGm)+'">'+formatCurrency(item.currentGm)+'</td><td class="'+getSignedClass(item.gmVariation)+'">'+formatCurrency(item.gmVariation)+'</td><td class="'+getSignedClass(item.previousGmPercent)+'">'+formatPercent(item.previousGmPercent)+'</td><td class="'+getSignedClass(item.currentGmPercent)+'">'+formatPercent(item.currentGmPercent)+'</td><td class="'+getSignedClass(item.gmPercentVariation)+'">'+formatSignedPercentagePoints(item.gmPercentVariation)+'</td>';tbody.appendChild(tr);});table.appendChild(thead);table.appendChild(tbody);table.appendChild(createComparisonSkuTotalFooter(details));scroll.appendChild(table);scroll.appendChild(createDashboardTablePagination('sku',page));card.appendChild(createTableCardHeader('SKU e Anuncio - comparativo Actual',function(){return table;}));card.appendChild(scroll);return card;}
     function createComparisonSkuTotalFooter(details){const totals=(details||[]).reduce(function(acc,item){acc.previousRevenue+=item.previousRevenue||0;acc.currentRevenue+=item.currentRevenue||0;acc.previousGm+=item.previousGm||0;acc.currentGm+=item.currentGm||0;return acc;},{previousRevenue:0,currentRevenue:0,previousGm:0,currentGm:0}),previousGmPercent=totals.previousRevenue?totals.previousGm/totals.previousRevenue:0,currentGmPercent=totals.currentRevenue?totals.currentGm/totals.currentRevenue:0,tfoot=document.createElement('tfoot'),row=document.createElement('tr');row.className='table-total-row';row.innerHTML='<td>Total geral</td><td></td><td></td><td>'+formatCurrency(totals.previousRevenue)+'</td><td>'+formatCurrency(totals.currentRevenue)+'</td><td class="'+getSignedClass(totals.currentRevenue-totals.previousRevenue)+'">'+formatCurrency(totals.currentRevenue-totals.previousRevenue)+'</td><td class="'+getSignedClass(totals.previousGm)+'">'+formatCurrency(totals.previousGm)+'</td><td class="'+getSignedClass(totals.currentGm)+'">'+formatCurrency(totals.currentGm)+'</td><td class="'+getSignedClass(totals.currentGm-totals.previousGm)+'">'+formatCurrency(totals.currentGm-totals.previousGm)+'</td><td>'+formatPercent(previousGmPercent)+'</td><td>'+formatPercent(currentGmPercent)+'</td><td class="'+getSignedClass(currentGmPercent-previousGmPercent)+'">'+formatSignedPercentagePoints(currentGmPercent-previousGmPercent)+'</td>';tfoot.appendChild(row);return tfoot;}
@@ -13399,7 +13548,7 @@
           return;
         }
 
-        const key = marketplaceSale + '||' + sku + '||' + ad;
+        const key = normalizeText(sku) + '||' + normalizeText(ad);
         const current = groups.get(key) || { marketplaceSale, sku, ad, rows: [] };
 
         current.rows.push(row);
@@ -13540,7 +13689,8 @@
     }
 
     /*
-      Agrupamento comum por Marketplace venda + SKU + anúncio.
+      Agrupamento comum por SKU + anúncio. A conta é apenas informativa e não
+      cria outra linha quando o mesmo vínculo aparece repetido na base.
     */
     function groupRowsByAd(rows, marketplaceSaleColumn, skuColumn, adColumn) {
       const marketplaceSaleIndex = dashboardState.headers.indexOf(marketplaceSaleColumn);
@@ -13557,7 +13707,7 @@
           return;
         }
 
-        const key = marketplaceSale + '||' + sku + '||' + ad;
+        const key = normalizeText(sku) + '||' + normalizeText(ad);
         const current = groups.get(key) || { marketplaceSale, sku, ad, rows: [] };
 
         current.rows.push(row);
@@ -13905,14 +14055,21 @@
         .replaceAll("'", '&#039;');
     }
   </script>
-  <script src="/assets/vendas-upload.js?v=6"></script>
-  <link rel="stylesheet" href="/assets/product-master.css?v=1">
-  <script src="/assets/product-master.js?v=2"></script>
-  <script src="/assets/fechamento.js?v=24"></script>
+  <script src="/assets/vendas-upload.js?v=19-20260729"></script>
+  <link rel="stylesheet" href="/assets/tratador-vendas.css?v=4-20260730">
+  <script src="/assets/tratador-vendas.js?v=14-20260730"></script>
+  <link rel="stylesheet" href="/assets/product-master.css?v=2">
+  <script src="/assets/product-master.js?v=5"></script>
+  <script src="/assets/fechamento.js?v=31"></script>
+  <script src="/assets/ads-upload.js?v=4"></script>
+  <link rel="stylesheet" href="/assets/contas.css?v=5">
+  <script src="/assets/contas.js?v=6"></script>
   <link rel="stylesheet" href="/assets/estoque.css?v=1">
   <script src="/assets/estoque.js?v=2"></script>
-  <link rel="stylesheet" href="/assets/calculadora-preco.css?v=6">
-  <script src="/assets/calculadora-preco.js?v=9"></script>
+  <link rel="stylesheet" href="/assets/estoque-full.css?v=4">
+  <script src="/assets/estoque-full.js?v=12"></script>
+  <link rel="stylesheet" href="/assets/calculadora-preco.css?v=7">
+  <script src="/assets/calculadora-preco.js?v=11"></script>
 </body>
 </html>
 

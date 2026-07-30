@@ -25,7 +25,7 @@
     ['Frete', 'Despesas Comerciais', 13], ['Manutenção Predial', 'Manutenção', 14],
     ['Tiny', 'Gastos com Sistema', 15], ['Combustível', 'Gastos com veículos', 16],
     ['Tarifas Bancárias', 'Despesas Financeiras', 17], ['Empréstimo Bancário', 'Amortização (Empréstimos)', 18],
-    ['Investimentos', 'Investimentos', 19], ['Projetos Patas Fiéis', 'Projetos Patas Fiéis', 20],
+    ['Investimentos', 'Investimentos', 19],
     ['Parcelamento de DAS', 'Parcelamentos', 21], ['Transferência', 'Transferência', 99]
   ];
   var cashFlowState = {
@@ -40,9 +40,17 @@
     months: ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'],
     sourceSheet: ''
   };
+  var budgetDatabase = { years: {}, updatedAt: null };
+  var budgetDrafts = {};
+  var selectedBudgetYear = new Date().getFullYear();
   var dreStructure = [];
   var salesDre = { year: 2026, sourceSheet: '', months: {} };
   var cashHoverDetails = {};
+  var financialCompanies = [];
+  var selectedFinancialCompany = '';
+  var cashFlowStorageKey = 'marketplace-financial-closing';
+  var cashFlowStorageVersionKey = 'marketplace-financial-closing-version';
+  var cashFlowStorageVersion = 'empty-bundled-cashflow-v1';
 
   async function refreshSalesRevenueFromDashboardUploads() {
     if (typeof loadPublishedMetadata !== 'function' || typeof loadSalesHistoryRowsByMonth !== 'function') return;
@@ -67,6 +75,9 @@
             var category = getSalesHistoryCell(row, dataset.columns.category);
             var scenario = getSalesHistoryCell(row, dataset.columns.scenario);
             var ad = getSalesHistoryCell(row, dataset.columns.ad);
+            var selectedCompanyName = (financialCompanies.find(function (item) { return item.id === selectedFinancialCompany; }) || {}).name || '';
+            var marketplaceSale = getSalesHistoryCell(row, dataset.columns.marketplaceSale);
+            if (selectedCompanyName && normalizeText(marketplaceSale) !== normalizeText(selectedCompanyName)) return;
             var categoryKey = normalizeText(category);
             var amount = parseNumber(row[dataset.columns.amount]) || 0;
             if (dataset.columns.scenario >= 0 && !isActualDatatype(scenario)) return;
@@ -124,11 +135,18 @@
 
   function loadClosingState() {
     try {
-      var saved = JSON.parse(localStorage.getItem('marketplace-financial-closing') || '{}');
+      if (localStorage.getItem(cashFlowStorageVersionKey) !== cashFlowStorageVersion) {
+        var legacy = JSON.parse(localStorage.getItem(cashFlowStorageKey) || '{}');
+        delete legacy.records;
+        delete legacy.fileName;
+        delete legacy.importedAt;
+        localStorage.setItem(cashFlowStorageKey, JSON.stringify(legacy));
+        localStorage.setItem(cashFlowStorageVersionKey, cashFlowStorageVersion);
+      }
+      var saved = JSON.parse(localStorage.getItem(cashFlowStorageKey) || '{}');
       if (Array.isArray(saved.records)) cashFlowState.records = saved.records;
       if (saved.fileName) cashFlowState.fileName = saved.fileName;
       if (saved.importedAt) cashFlowState.importedAt = saved.importedAt;
-      if (saved.budget && saved.budget.rows) budgetState = saved.budget;
       return Array.isArray(saved.records) && saved.records.length > 0;
     } catch (error) {
       console.warn('Não foi possível restaurar o fechamento salvo:', error.message);
@@ -138,7 +156,7 @@
 
   async function loadFinancialSeed(preserveRecords) {
     try {
-      var response = await fetch('/assets/fechamento-seed.json?v=1', { cache: 'no-store' });
+      var response = await fetch('/assets/fechamento-seed.json?v=2', { cache: 'no-store' });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       var seed = await response.json();
       if (!preserveRecords) {
@@ -165,15 +183,79 @@
 
   function saveClosingState() {
     try {
-      localStorage.setItem('marketplace-financial-closing', JSON.stringify({
+      localStorage.setItem(cashFlowStorageKey, JSON.stringify({
         records: cashFlowState.records,
         fileName: cashFlowState.fileName,
-        importedAt: cashFlowState.importedAt,
-        budget: budgetState
+        importedAt: cashFlowState.importedAt
       }));
     } catch (error) {
       console.warn('O navegador não conseguiu persistir todo o fechamento:', error.message);
     }
+  }
+
+  function classifyBudgetRows(details, zeroValues) {
+    var classificationKeys = new Set(mappings.map(function (mapping) { return normalizeCashKey(mapping[1]); }));
+    var standaloneKeys = new Set([
+      'FATURAMENTO TOTAL META', 'FATURAMENTO TOTAL MINIMO', 'CUSTO DE PRODUTO VENDIDO',
+      'IMPOSTO', 'DESPESAS COM MKP E SITE', 'MCR$', 'MC%', 'MARGEM DE CONTRIBUICAO',
+      'RESULTADO OPERACIONAL R$', 'RESULTADO OPERACIONAL %', 'CUSTO VARIADO R$',
+      'CUSTO VARIADO %', 'CUSTO TOTAL', 'RESULTADO R$', 'RESULTADO %'
+    ]);
+    var parentId = '';
+    return (details || []).map(function (row, index) {
+      var key = normalizeCashKey(row.label);
+      var kind = classificationKeys.has(key) ? 'classification' : (standaloneKeys.has(key) ? 'standalone' : (parentId ? 'category' : 'standalone'));
+      var id = 'budget-row-' + index + '-' + key.replace(/[^A-Z0-9]+/g, '-').toLowerCase();
+      if (kind === 'classification') parentId = id;
+      if (kind === 'standalone') parentId = '';
+      return {
+        id: id,
+        label: row.label,
+        kind: kind,
+        parentId: kind === 'category' ? parentId : '',
+        values: Array.from({ length: 12 }, function (_, monthIndex) {
+          return zeroValues ? 0 : Number((row.values || [])[monthIndex]) || 0;
+        })
+      };
+    });
+  }
+
+  function templateBudgetRows(year) {
+    return classifyBudgetRows(budgetState.details || [], year !== 2026);
+  }
+
+  function getBudgetRows(year) {
+    var savedYear = budgetDatabase.years && budgetDatabase.years[String(year)];
+    if (savedYear && Array.isArray(savedYear.rows)) return savedYear.rows;
+    if (!budgetDrafts[String(year)]) budgetDrafts[String(year)] = templateBudgetRows(year);
+    return budgetDrafts[String(year)];
+  }
+
+  async function loadBudgetDatabase() {
+    try {
+      var response = await fetch('/api/budgets', { cache: 'no-store' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      var loaded = await response.json();
+      budgetDatabase = {
+        years: loaded.years && typeof loaded.years === 'object' ? loaded.years : {},
+        updatedAt: loaded.updatedAt || null
+      };
+    } catch (error) {
+      console.warn('Não foi possível carregar os orçamentos:', error.message);
+    }
+  }
+
+  async function saveBudgetYear(year, rows) {
+    var response = await fetch('/api/budgets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save-year', year: year, rows: rows })
+    });
+    var result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Não foi possível salvar o orçamento.');
+    budgetDatabase = result;
+    budgetDrafts[String(year)] = result.years[String(year)].rows;
+    return result.years[String(year)];
   }
 
   function money(value) {
@@ -196,6 +278,16 @@
 
   function yearControl() {
     return '<label>Ano <select class="closing-select" aria-label="Ano do fechamento"><option>2026</option><option>2025</option><option>2024</option></select></label>';
+  }
+
+  function financialCompanyControl(id) {
+    return '<label>Empresa <select class="closing-select" id="' + id + '"><option value="">Todas as empresas</option>' + financialCompanies.map(function (item) {
+      return '<option value="' + escapeCashHtml(item.id) + '"' + (item.id === selectedFinancialCompany ? ' selected' : '') + '>' + escapeCashHtml(item.name) + '</option>';
+    }).join('') + '</select></label>';
+  }
+
+  function filterFinancialRecords(records) {
+    return selectedFinancialCompany ? records.filter(function (record) { return record.companyId === selectedFinancialCompany; }) : records;
   }
 
   function kpis(items) {
@@ -243,7 +335,7 @@
   function renderCashFlow() {
     var container = document.getElementById('cashFlowContainer');
     if (!container) return;
-    var records = cashFlowState.records;
+    var records = filterFinancialRecords(cashFlowState.records);
     var entries = records.filter(function (record) { return record.value > 0; }).reduce(function (total, record) { return total + record.value; }, 0);
     var exits = records.filter(function (record) { return record.value < 0; }).reduce(function (total, record) { return total + record.value; }, 0);
     var balance = entries + exits;
@@ -257,7 +349,7 @@
       '<th>TOTAL</th></tr></thead><tbody>' + buildCashSummaryHierarchy(hierarchyRecords, activeMonths) + '</tbody></table></div></div>' : '';
     container.innerHTML = '<div class="closing-shell">' +
       head('Base — Fluxo de Caixa', 'Importação, validação e consulta dos lançamentos financeiros.',
-        '<label class="closing-button primary" for="cashFlowFileInput">Importar fluxo de caixa</label><input class="closing-input" id="cashFlowFileInput" type="file" accept=".xlsx,.xls,.csv" aria-label="Selecionar arquivo do fluxo de caixa">') +
+        financialCompanyControl('cashFlowCompany') + '<label class="closing-button primary" for="cashFlowFileInput">Importar fluxo de caixa</label><input class="closing-input" id="cashFlowFileInput" type="file" accept=".xlsx,.xls,.csv" aria-label="Selecionar arquivo do fluxo de caixa">') +
       kpis([['Entradas do período', entries], ['Saídas do período', exits], ['Saldo do período', balance], ['Saldo acumulado', balance]]) +
       '<div id="cashImportPreview"></div>' +
       hierarchy + (records.length ? cashFlowTable(records) : emptyCashFlowTable()) + '</div>';
@@ -265,6 +357,8 @@
     if (fileInput) {
       fileInput.addEventListener('change', handleCashFlowFile);
     }
+    var companySelect = document.getElementById('cashFlowCompany');
+    if (companySelect) companySelect.addEventListener('change', function () { selectedFinancialCompany = this.value; refreshSalesRevenueFromDashboardUploads().then(function () { renderCashFlow(); renderSummary(); renderDre(); }); });
     bindCashExpandButtons(container);
   }
 
@@ -537,6 +631,11 @@
   }
 
   async function handleCashFlowFile(event) {
+    if (financialCompanies.length && !selectedFinancialCompany) {
+      alert('Selecione a empresa antes de importar o Fluxo de Caixa.');
+      event.target.value = '';
+      return;
+    }
     var file = event.target.files && event.target.files[0];
     if (!file) return;
     var previewBox = document.getElementById('cashImportPreview');
@@ -555,14 +654,6 @@
         rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: true });
       }
       cashFlowState.preview = readCashFlowRows(rows, file.name);
-      var comparison = workbook ? readBudgetComparisonSheet(workbook) : { rows: {}, sourceSheet: '' };
-      var plan = workbook ? readBudgetPlanSheet(workbook) : { rows: {}, details: [], sourceSheet: '' };
-      if (workbook && comparison.details.length) {
-        var comments = {};
-        comparison.details.forEach(function (row) { if (row.comment) comments[normalizeCashKey(row.label)] = row.comment; });
-        plan.details.forEach(function (row) { row.comment = comments[normalizeCashKey(row.label)] || ''; });
-      }
-      cashFlowState.preview.budget = plan.details.length ? plan : comparison;
       renderCashFlowPreview();
     } catch (error) {
       previewBox.innerHTML = '<div class="closing-import negative"><strong>Não foi possível ler o arquivo.</strong><br>' + escapeCashHtml(error.message) + '</div>';
@@ -585,9 +676,7 @@
       preview.rejected.length.toLocaleString('pt-BR') + ' rejeitadas</span> · ' + preview.warnings.length.toLocaleString('pt-BR') +
       ' avisos não bloqueantes · ' + (preview.duplicates || 0).toLocaleString('pt-BR') +
       ' duplicidades mantidas<br>Período: ' + period + ' · Entradas: ' + money(entries) + ' · Saídas: ' + money(exits) + ' · Saldo: ' +
-      money(entries + exits) + '<br>Orçamento: ' + (preview.budget && Object.keys(preview.budget.rows).length
-        ? Object.keys(preview.budget.rows).length + ' linhas encontradas na aba ' + escapeCashHtml(preview.budget.sourceSheet)
-        : 'nenhuma aba compatível encontrada') +
+      money(entries + exits) + '<br>Este arquivo alimentará somente os lançamentos de entrada e saída do Fluxo de Caixa.' +
       (preview.rejected.length ? '<br>Primeiras rejeições: ' + preview.rejected.slice(0, 5).map(function (item) { return 'linha ' + item.line + ' (' + item.reason + ')'; }).join('; ') : '') +
       '<div class="closing-actions" style="margin-top:12px"><button class="closing-button primary" id="cashOnlyNewButton" type="button">Confirmar arquivo completo</button>' +
       '<button class="closing-button" id="cashReplaceButton" type="button">Substituir período</button><button class="closing-button" id="cashCancelButton" type="button">Cancelar</button></div></div>';
@@ -602,9 +691,14 @@
     var current = cashFlowState.records.slice();
     if (mode === 'replace' && preview.valid.length) {
       var dates = preview.valid.map(function (record) { return record.date; }).sort();
-      current = current.filter(function (record) { return record.date < dates[0] || record.date > dates[dates.length - 1]; });
+      current = current.filter(function (record) {
+        if (record.companyId !== selectedFinancialCompany) return true;
+        return record.date < dates[0] || record.date > dates[dates.length - 1];
+      });
     }
     preview.valid.forEach(function (record) {
+      record.companyId = selectedFinancialCompany;
+      record.company = (financialCompanies.find(function (item) { return item.id === selectedFinancialCompany; }) || {}).name || '';
       current.push(record);
     });
     current.sort(function (a, b) { return a.date.localeCompare(b.date) || a.line - b.line; });
@@ -612,11 +706,6 @@
     cashFlowState.fileName = preview.fileName;
     cashFlowState.importedAt = new Date().toISOString();
     cashFlowState.preview = null;
-    if (preview.budget && Object.keys(preview.budget.rows).length) {
-      budgetState.rows = preview.budget.rows;
-      budgetState.details = preview.budget.details || [];
-      budgetState.sourceSheet = preview.budget.sourceSheet;
-    }
     rebuildCashSummaryFromRecords();
     saveClosingState();
     renderCashFlow();
@@ -781,14 +870,14 @@
     if (!container) return;
     var years = getCashSummaryYears();
     var year = Number(selectedYear) || years[0] || new Date().getFullYear();
-    var records = cashFlowState.records.filter(function (record) { return record.year === year; });
+    var records = filterFinancialRecords(cashFlowState.records).filter(function (record) { return record.year === year; });
     var activeMonths = Array.from(new Set(records.map(function (record) { return record.month; }).filter(Boolean))).sort(function (a, b) { return a - b; });
     var entries = records.filter(function (record) { return record.value > 0; }).reduce(function (total, record) { return total + record.value; }, 0);
     var exits = records.filter(function (record) { return record.value < 0; }).reduce(function (total, record) { return total + record.value; }, 0);
     var yearOptions = (years.length ? years : [year]).map(function (item) {
       return '<option value="' + item + '"' + (item === year ? ' selected' : '') + '>' + item + '</option>';
     }).join('');
-    var actions = '<label>Ano <select class="closing-select" id="cashSummaryYear">' + yearOptions + '</select></label>';
+    var actions = financialCompanyControl('cashSummaryCompany') + '<label>Ano <select class="closing-select" id="cashSummaryYear">' + yearOptions + '</select></label>';
     var table = records.length && activeMonths.length
       ? '<div class="closing-card"><div class="closing-card-head"><h3>Classificações, categorias e lançamentos</h3><span class="closing-pill">' +
         activeMonths.map(function (month) { return months[month - 1]; }).join('–') + ' · somente meses importados</span></div><div class="closing-table-wrap"><table class="closing-table cash-hierarchy-table"><thead><tr><th>Classificação / Categoria / Lançamento</th>' +
@@ -801,6 +890,8 @@
       table + '</div>';
     var yearSelect = document.getElementById('cashSummaryYear');
     if (yearSelect) yearSelect.addEventListener('change', function () { renderSummary(yearSelect.value); });
+    var companySelect = document.getElementById('cashSummaryCompany');
+    if (companySelect) companySelect.addEventListener('change', function () { selectedFinancialCompany = this.value; refreshSalesRevenueFromDashboardUploads().then(function () { renderSummary(year); renderCashFlow(); renderDre(); }); });
     bindCashExpandButtons(container);
   }
 
@@ -835,7 +926,7 @@
 
   function renderDre() {
     var year = 2026;
-    var yearRecords = cashFlowState.records.filter(function (record) { return record.year === year; });
+    var yearRecords = filterFinancialRecords(cashFlowState.records).filter(function (record) { return record.year === year; });
     var activeMonths = Array.from(new Set(yearRecords
       .map(function (record) { return record.month; }).filter(Boolean))).sort(function (a, b) { return a - b; });
     var structure = dreStructure.length ? dreStructure : [
@@ -843,6 +934,28 @@
       { label: 'IMPOSTO', subtotal: 0 }, { label: 'DESPESAS COM MKP E SITE', subtotal: 0 },
       { label: 'MARGEM DE CONTRIBUIÇÃO TOTAL R$', subtotal: 1 }, { label: 'RESULTADO R$', subtotal: 1 }
     ];
+    structure = structure.slice();
+    var hasDreLine = function (label) {
+      var key = normalizeCashKey(label);
+      return structure.some(function (line) { return normalizeCashKey(line.label) === key; });
+    };
+    var insertBeforeDreLine = function (beforeLabel, line) {
+      if (hasDreLine(line.label)) return;
+      var beforeKey = normalizeCashKey(beforeLabel);
+      var index = structure.findIndex(function (item) { return normalizeCashKey(item.label) === beforeKey; });
+      structure.splice(index >= 0 ? index : structure.length, 0, line);
+    };
+    insertBeforeDreLine('RESULTADO OPERACIONAL R$', { label: 'CUSTO FIXO TOTAL', subtotal: 1 });
+    var variablePercentIndex = structure.findIndex(function (line) {
+      return normalizeCashKey(line.label).indexOf('CUSTO VARIADO %') >= 0 || normalizeCashKey(line.label).indexOf('CUSTO VARIAVEL %') >= 0;
+    });
+    if (variablePercentIndex >= 0) structure.splice(variablePercentIndex, 1);
+    insertBeforeDreLine('CUSTO TOTAL', { label: 'CUSTO VARIÁVEL TOTAL', subtotal: 1 });
+    if (!hasDreLine('MARGEM PARA O PONTO DE EQUILÍBRIO')) {
+      var resultPercentIndex = structure.findIndex(function (line) { return normalizeCashKey(line.label) === 'RESULTADO %'; });
+      structure.splice(resultPercentIndex >= 0 ? resultPercentIndex + 1 : structure.length, 0,
+        { label: 'MARGEM PARA O PONTO DE EQUILÍBRIO', subtotal: 2 });
+    }
     var rows = structure.map(function (line) {
       return { label: line.label, subtotal: Number(line.subtotal) || 0, values: activeMonths.map(function (month) {
         return getDreActual(line.label, month, year);
@@ -864,7 +977,13 @@
           ? new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(value)
           : numericButton(row.label, activeMonths[index], value, 'dre')) + '</td>';
       }).join('');
+      var rowKey = normalizeCashKey(row.label);
       var total = isPercent ? (row.values[row.values.length - 1] || 0) : sum(row.values);
+      if (rowKey === 'MARGEM PARA O PONTO DE EQUILIBRIO') {
+        var annualRevenue = sum(activeMonths.map(function (month) { return getDreActual('FATURAMENTO TOTAL', month, year); }));
+        var annualCost = sum(activeMonths.map(function (month) { return getDreActual('CUSTO TOTAL', month, year); }));
+        total = annualRevenue ? Math.abs(annualCost) / annualRevenue : 0;
+      }
       return '<tr class="' + (row.subtotal ? 'total-row' : '') + '"><td>' + escapeCashHtml(row.label) + '</td>' + cells +
         '<td class="' + numberClass(total) + '">' + (isPercent
           ? new Intl.NumberFormat('pt-BR', { style: 'percent', maximumFractionDigits: 1 }).format(total) : money(total)) + '</td></tr>';
@@ -882,12 +1001,14 @@
       return getDreActual('RESULTADO R$', month, year);
     }));
     document.getElementById('dreContainer').innerHTML = '<div class="closing-shell">' +
-      head('DRE Mensal e Anual', 'Topo e margem pela base de vendas; despesas posteriores pelo fluxo de caixa.', yearControl()) +
+      head('DRE Mensal e Anual', 'Topo e margem pela base de vendas; despesas posteriores pelo fluxo de caixa.', financialCompanyControl('dreCompany') + yearControl()) +
       kpis([['Faturamento Total', revenue], ['Margem contribuição Total', margin], ['Resultado operacional Total', operating], ['Resultado Total', result]]) +
       '<div class="closing-card"><div class="closing-card-head"><h3>Estrutura DRE</h3><span class="closing-pill">Somente meses realizados</span></div>' +
       '<div class="closing-table-wrap"><table class="closing-table"><thead><tr><th>Linha DRE</th>' +
       activeMonths.map(function (month) { return '<th>' + months[month - 1] + '</th>'; }).join('') +
       '<th>TOTAL</th></tr></thead><tbody>' + body + '</tbody></table></div></div></div>';
+    var companySelect = document.getElementById('dreCompany');
+    if (companySelect) companySelect.addEventListener('change', function () { selectedFinancialCompany = this.value; refreshSalesRevenueFromDashboardUploads().then(function () { renderDre(); renderCashFlow(); renderSummary(); }); });
   }
 
   function getDreActual(label, month, year) {
@@ -900,7 +1021,7 @@
     var salesContribution = salesMonth && Number.isFinite(Number(salesMonth.contribution))
       ? Number(salesMonth.contribution)
       : salesRevenue + salesCmv + salesTax + salesMkp;
-    var records = cashFlowState.records.filter(function (record) { return record.year === year && record.month === month; });
+    var records = filterFinancialRecords(cashFlowState.records).filter(function (record) { return record.year === year && record.month === month; });
     var totalFor = function (predicate) { return records.filter(predicate).reduce(function (total, record) { return total + record.value; }, 0); };
     var receipts = totalFor(function (record) { return ['RECEITAS', 'JUROS SOBRE INVESTIMENTO'].indexOf(normalizeCashKey(record.classification)) >= 0; });
     var cmv = totalFor(function (record) { return normalizeCashKey(record.classification) === 'PRODUTOS'; });
@@ -921,21 +1042,158 @@
     if (key.indexOf('DESPESAS COM MKP') >= 0) return salesMkp;
     if (key.indexOf('MARGEM DE CONTRIBUICAO TOTAL R$') >= 0) return salesContribution;
     if (key.indexOf('MARGEM DE CONTRIBUICAO TOTAL %') >= 0) return salesRevenue ? salesContribution / salesRevenue : 0;
+    if (key === 'CUSTO FIXO TOTAL') return fixed;
     if (key.indexOf('RESULTADO OPERACIONAL R$') >= 0) return salesContribution + fixed;
     if (key.indexOf('RESULTADO OPERACIONAL %') >= 0) return salesRevenue ? (salesContribution + fixed) / salesRevenue : 0;
+    if (key === 'CUSTO VARIAVEL TOTAL') return variable;
     if (key.indexOf('CUSTO VARIADO R$') >= 0) return variable;
     if (key.indexOf('CUSTO VARIADO %') >= 0) return receipts ? variable / receipts : 0;
-    if (key === 'CUSTO TOTAL') return salesCmv + salesTax + salesMkp + fixed + variable;
+    if (key === 'CUSTO TOTAL') return fixed + variable;
     if (key === 'RESULTADO R$') return salesContribution + fixed + variable;
     if (key === 'RESULTADO %') return salesRevenue ? (salesContribution + fixed + variable) / salesRevenue : 0;
+    if (key === 'MARGEM PARA O PONTO DE EQUILIBRIO') return salesRevenue ? Math.abs(fixed + variable) / salesRevenue : 0;
     return totalFor(function (record) { return normalizeCashKey(record.classification) === key; });
   }
 
-  function renderBudget(selectedMonth) {
-    var budgetYear = 2026;
+  function budgetYearOptions(selectedYear) {
+    var currentYear = new Date().getFullYear();
+    var values = [currentYear - 1, currentYear, currentYear + 1, currentYear + 2, currentYear + 3];
+    Object.keys(budgetDatabase.years || {}).forEach(function (year) { values.push(Number(year)); });
+    return Array.from(new Set(values)).filter(Boolean).sort(function (a, b) { return a - b; }).map(function (year) {
+      return '<option value="' + year + '"' + (year === selectedYear ? ' selected' : '') + '>' + year + '</option>';
+    }).join('');
+  }
+
+  function renderBudgetEditor(year) {
+    selectedBudgetYear = Number(year) || selectedBudgetYear;
+    var rows = getBudgetRows(selectedBudgetYear);
+    var saved = budgetDatabase.years && budgetDatabase.years[String(selectedBudgetYear)];
+    var body = rows.map(function (row) {
+      var total = sum(row.values || []);
+      var label = row.kind === 'classification'
+        ? '<button class="cash-expand" type="button" aria-expanded="false" aria-label="Abrir ' +
+          escapeCashHtml(row.label) + '">+</button><strong>' + escapeCashHtml(row.label) +
+          '</strong><button class="budget-mini-action" type="button" data-budget-add-category="' + row.id + '">+ categoria</button>'
+        : escapeCashHtml(row.label);
+      var inputs = Array.from({ length: 12 }, function (_, monthIndex) {
+        return '<td><input class="budget-value-input" type="text" inputmode="decimal" aria-label="' +
+          escapeCashHtml(row.label + ' ' + months[monthIndex]) + '" data-budget-row="' + row.id +
+          '" data-budget-month="' + monthIndex + '" value="' + String(Number(row.values[monthIndex]) || 0).replace('.', ',') + '"></td>';
+      }).join('');
+      var hierarchy = row.kind === 'classification'
+        ? ' class="budget-editor-classification" data-cash-row="' + row.id + '"'
+        : (row.kind === 'category'
+          ? ' class="budget-editor-category cash-hidden" data-cash-parent="' + row.parentId + '"'
+          : ' class="budget-editor-standalone"');
+      return '<tr' + hierarchy + '><td>' + label + '</td>' + inputs +
+        '<td class="' + numberClass(total) + '" data-budget-total="' + row.id + '">' + money(total) + '</td></tr>';
+    }).join('');
+    var header = '<tr><th>Classificação / Categoria</th>' + months.map(function (month) { return '<th>' + month + '</th>'; }).join('') + '<th>TOTAL</th></tr>';
+    var status = saved
+      ? 'Salvo em ' + new Date(saved.updatedAt).toLocaleString('pt-BR')
+      : 'Novo orçamento · ainda não salvo';
+    document.getElementById('budgetEditorContainer').innerHTML = '<div class="closing-shell">' +
+      head('Cadastro de Orçamento', 'Crie e altere o orçamento anual dentro do sistema, sem depender do arquivo de Fluxo de Caixa.',
+        '<label>Ano <select class="closing-select" id="budgetEditorYear">' + budgetYearOptions(selectedBudgetYear) + '</select></label>' +
+        '<button class="closing-button" id="budgetCopyPrevious" type="button">Copiar ano anterior</button>' +
+        '<button class="closing-button" id="budgetAddClassification" type="button">Nova classificação</button>' +
+        '<button class="closing-button primary" id="budgetSaveYear" type="button">Salvar orçamento</button>') +
+      '<div class="closing-card"><div class="closing-card-head"><h3>Orçamento anual · ' + selectedBudgetYear +
+      '</h3><span class="closing-pill" id="budgetSaveStatus">' + escapeCashHtml(status) +
+      '</span></div><div class="closing-table-wrap"><table class="closing-table budget-editor-table"><thead>' + header +
+      '</thead><tbody>' + body + '</tbody></table></div></div></div>';
+
+    document.getElementById('budgetEditorYear').addEventListener('change', function (event) {
+      renderBudgetEditor(Number(event.target.value));
+    });
+    Array.from(document.querySelectorAll('.budget-value-input')).forEach(function (input) {
+      input.addEventListener('change', function () {
+        var row = rows.find(function (item) { return item.id === input.dataset.budgetRow; });
+        if (!row) return;
+        row.values[Number(input.dataset.budgetMonth)] = parseCashValue(input.value) || 0;
+        input.value = String(row.values[Number(input.dataset.budgetMonth)]).replace('.', ',');
+        var totalCell = document.querySelector('[data-budget-total="' + row.id + '"]');
+        if (totalCell) {
+          var total = sum(row.values);
+          totalCell.className = numberClass(total);
+          totalCell.textContent = money(total);
+        }
+        document.getElementById('budgetSaveStatus').textContent = 'Alterações não salvas';
+      });
+    });
+    Array.from(document.querySelectorAll('[data-budget-add-category]')).forEach(function (button) {
+      button.addEventListener('click', function () {
+        var label = window.prompt('Nome da nova categoria:');
+        if (!normalizeCashText(label)) return;
+        var parentIndex = rows.findIndex(function (row) { return row.id === button.dataset.budgetAddCategory; });
+        var insertIndex = parentIndex + 1;
+        while (insertIndex < rows.length && rows[insertIndex].kind === 'category' && rows[insertIndex].parentId === button.dataset.budgetAddCategory) insertIndex += 1;
+        rows.splice(insertIndex, 0, {
+          id: 'budget-custom-' + Date.now(),
+          label: normalizeCashText(label),
+          kind: 'category',
+          parentId: button.dataset.budgetAddCategory,
+          values: Array(12).fill(0)
+        });
+        budgetDrafts[String(selectedBudgetYear)] = rows;
+        renderBudgetEditor(selectedBudgetYear);
+      });
+    });
+    document.getElementById('budgetAddClassification').addEventListener('click', function () {
+      var label = window.prompt('Nome da nova classificação:');
+      if (!normalizeCashText(label)) return;
+      rows.push({
+        id: 'budget-custom-' + Date.now(),
+        label: normalizeCashText(label),
+        kind: 'classification',
+        parentId: '',
+        values: Array(12).fill(0)
+      });
+      budgetDrafts[String(selectedBudgetYear)] = rows;
+      renderBudgetEditor(selectedBudgetYear);
+    });
+    document.getElementById('budgetCopyPrevious').addEventListener('click', function () {
+      var previousRows = getBudgetRows(selectedBudgetYear - 1);
+      var idMap = {};
+      previousRows.forEach(function (row, index) { idMap[row.id] = 'budget-copy-' + selectedBudgetYear + '-' + index; });
+      budgetDrafts[String(selectedBudgetYear)] = previousRows.map(function (row) {
+        return {
+          id: idMap[row.id],
+          label: row.label,
+          kind: row.kind,
+          parentId: row.parentId ? idMap[row.parentId] || '' : '',
+          values: (row.values || []).slice(0, 12)
+        };
+      });
+      delete budgetDatabase.years[String(selectedBudgetYear)];
+      renderBudgetEditor(selectedBudgetYear);
+    });
+    document.getElementById('budgetSaveYear').addEventListener('click', async function () {
+      var button = this;
+      var statusBox = document.getElementById('budgetSaveStatus');
+      button.disabled = true;
+      statusBox.textContent = 'Salvando…';
+      try {
+        await saveBudgetYear(selectedBudgetYear, rows);
+        statusBox.textContent = 'Orçamento salvo';
+        renderBudget(selectedBudgetMonth, selectedBudgetYear);
+      } catch (error) {
+        statusBox.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    bindCashExpandButtons(document.getElementById('budgetEditorContainer'));
+  }
+
+  var selectedBudgetMonth = 1;
+
+  function renderBudget(selectedMonth, selectedYear) {
+    var budgetYear = Number(selectedYear) || selectedBudgetYear;
+    selectedBudgetYear = budgetYear;
     var month = Math.min(12, Math.max(1, Number(selectedMonth) || 1));
-    var details = Array.isArray(budgetState.details) && budgetState.details.length ? budgetState.details :
-      Object.keys(budgetState.rows || {}).map(function (label) { return { label: label, values: [budgetState.rows[label].budget], kind: 'group' }; });
+    selectedBudgetMonth = month;
+    var details = getBudgetRows(budgetYear);
     var classificationKeys = new Set(mappings.map(function (mapping) {
       return normalizeCashKey(mapping[1]);
     }));
@@ -948,11 +1206,11 @@
     var currentClassification = '';
     var classificationIndex = 0;
     var rows = details.map(function (row) {
-      var budget = ((row.values || [])[month - 1] == null ? 0 : row.values[month - 1]);
+      var budget = Number((row.values || [])[month - 1]) || 0;
       var actual = getCashActualForBudgetLine(row.label, month, budgetYear);
       var key = normalizeCashKey(row.label);
-      var isClassification = classificationKeys.has(key);
-      var isStandalone = standaloneKeys.has(key);
+      var isClassification = row.kind ? row.kind === 'classification' : classificationKeys.has(key);
+      var isStandalone = row.kind ? row.kind === 'standalone' : standaloneKeys.has(key);
 
       if (isClassification) {
         classificationIndex += 1;
@@ -999,16 +1257,19 @@
     }).join('');
     document.getElementById('budgetContainer').innerHTML = '<div class="closing-shell">' +
       head('Orçado x Realizado', 'Visão mensal por classificação e categoria; realizado recalculado pelo Fluxo de Caixa.',
-        yearControl() + '<select class="closing-select" id="budgetMonth">' + monthOptions + '</select>') +
+        '<label>Ano <select class="closing-select" id="budgetCompareYear">' + budgetYearOptions(budgetYear) + '</select></label>' +
+        '<select class="closing-select" id="budgetMonth">' + monthOptions + '</select>') +
       '<div class="closing-card"><div class="closing-card-head"><h3>Comparativo mensal · ' + budgetState.months[month - 1] +
       '</h3><span class="closing-pill">' +
-      (budgetState.sourceSheet ? 'Origem: ' + escapeCashHtml(budgetState.sourceSheet) : 'Aguardando importação do orçamento') +
+      (budgetDatabase.years[String(budgetYear)] ? 'Orçamento salvo no sistema' : 'Orçamento ainda não salvo') +
       '</span></div><div class="closing-table-wrap"><table class="closing-table"><thead><tr><th>Classificação / Categoria</th><th>Realizado</th><th>Orçado</th><th>Variação R$</th><th>Variação %</th><th>Atingimento</th><th>Status</th><th>Comentário</th></tr></thead><tbody>' + body + '</tbody></table></div></div></div>';
     Array.from(document.querySelectorAll('.budget-comment')).forEach(function (input) {
       input.addEventListener('change', function () { localStorage.setItem('closing-comment-' + decodeURIComponent(input.dataset.line), input.value); });
     });
     var selector = document.getElementById('budgetMonth');
-    if (selector) selector.addEventListener('change', function () { renderBudget(selector.value); });
+    if (selector) selector.addEventListener('change', function () { renderBudget(selector.value, budgetYear); });
+    var yearSelector = document.getElementById('budgetCompareYear');
+    if (yearSelector) yearSelector.addEventListener('change', function () { renderBudget(month, Number(yearSelector.value)); });
     bindCashExpandButtons(document.getElementById('budgetContainer'));
   }
 
@@ -1043,11 +1304,59 @@
     var filtered = mappings.filter(function (row) { return !needle || (row[0] + ' ' + row[1]).toLocaleLowerCase('pt-BR').indexOf(needle) >= 0; });
     container.innerHTML = '<div class="closing-shell">' +
       head('De-Para Financeiro', 'Administração de categorias analíticas e suas classificações sintéticas.',
-        '<input class="closing-input mapping-search" id="mappingSearch" placeholder="Buscar categoria ou classificação" value="' + (filter || '') + '"><button class="closing-button primary" type="button">Nova regra</button>') +
-      '<div class="closing-card"><div class="closing-card-head"><h3>Categorias classificadas</h3><span class="closing-pill">' + filtered.length + ' regras exibidas · 126 no seed</span></div><div class="closing-table-wrap"><table class="closing-table"><thead><tr><th>Categoria</th><th>Classificação</th><th>Ordem</th><th>Natureza</th><th>Status</th></tr></thead><tbody>' +
+        '<input class="closing-input mapping-search" id="mappingSearch" placeholder="Buscar categoria ou classificação" value="' + (filter || '') + '"><button class="closing-button primary" id="newMappingRule" type="button">Nova regra</button>') +
+      '<div class="closing-card"><div class="closing-card-head"><h3>Categorias classificadas</h3><span class="closing-pill">' + filtered.length + ' regras exibidas</span></div><div class="closing-table-wrap"><table class="closing-table"><thead><tr><th>Categoria</th><th>Classificação base</th><th>Ordem</th><th>Natureza</th><th>Status</th></tr></thead><tbody>' +
       filtered.map(function (r) { var nature = r[2] <= 2 ? 'Receita' : r[2] <= 5 ? 'Custo venda' : r[2] <= 16 ? 'Gasto fixo' : r[2] <= 21 ? 'Custo variável' : 'Transferência'; return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td><td>' + nature + '</td><td><span class="closing-status good">Mapeada</span></td></tr>'; }).join('') +
       '</tbody></table></div></div></div>';
     document.getElementById('mappingSearch').addEventListener('input', function (event) { renderMapping(event.target.value); });
+    document.getElementById('newMappingRule').addEventListener('click', openMappingRuleModal);
+  }
+
+  async function loadFinancialMappings() {
+    try {
+      var response = await fetch('/api/financial-options', { cache: 'no-store' });
+      var payload = await response.json();
+      if (!response.ok || !Array.isArray(payload.options) || !payload.options.length) return;
+      mappings = payload.options.filter(function (item) {
+        return normalizeCashKey(item.category) !== 'PROJETOS PATAS FIEIS';
+      }).map(function (item) { return [item.category, item.classification, Number(item.order) || 999]; });
+    } catch (error) {
+      console.error('Falha ao carregar o De-Para financeiro:', error);
+    }
+  }
+
+  function openMappingRuleModal() {
+    var existing = document.getElementById('mappingRuleModal');
+    if (existing) existing.remove();
+    var classifications = [];
+    mappings.slice().sort(function (a, b) { return a[2] - b[2]; }).forEach(function (item) {
+      if (!classifications.some(function (classification) { return classification.name === item[1]; })) classifications.push({ name: item[1], order: item[2] });
+    });
+    var modal = document.createElement('div');
+    modal.id = 'mappingRuleModal';
+    modal.className = 'mapping-modal-backdrop';
+    modal.innerHTML = '<section class="mapping-modal" role="dialog" aria-modal="true" aria-labelledby="mappingModalTitle"><div class="mapping-modal-head"><div><span>De-Para Financeiro</span><h3 id="mappingModalTitle">Nova categoria</h3></div><button type="button" data-close-mapping aria-label="Fechar">×</button></div><p>Crie a categoria e selecione a classificação-base da DRE e do Fluxo de Caixa.</p><form id="mappingRuleForm"><label>Nome da categoria<input class="closing-input" name="category" required placeholder="Ex.: Seguro empresarial"></label><label>Classificação-base<select class="closing-select" name="classification" required><option value="">Selecione</option>' + classifications.map(function (item) { return '<option value="' + escapeCashHtml(item.name) + '" data-order="' + item.order + '">' + escapeCashHtml(item.name) + '</option>'; }).join('') + '</select></label><div class="mapping-modal-actions"><button class="closing-button" type="button" data-close-mapping>Cancelar</button><button class="closing-button primary" type="submit">Criar categoria</button></div></form></section>';
+    document.body.appendChild(modal);
+    Array.from(modal.querySelectorAll('[data-close-mapping]')).forEach(function (button) { button.addEventListener('click', function () { modal.remove(); }); });
+    modal.addEventListener('click', function (event) { if (event.target === modal) modal.remove(); });
+    document.getElementById('mappingRuleForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.target;
+      var selected = form.elements.classification.options[form.elements.classification.selectedIndex];
+      try {
+        var response = await fetch('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'upsert-financial-option', classification: form.elements.classification.value, category: form.elements.category.value, order: Number(selected.dataset.order) || 999 }) });
+        var result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Não foi possível criar a categoria.');
+        await loadFinancialMappings();
+        modal.remove();
+        renderMapping('');
+      } catch (error) { alert(error.message); }
+    });
+    formFocusSoon(modal.querySelector('input[name="category"]'));
+  }
+
+  function formFocusSoon(input) {
+    window.setTimeout(function () { if (input) input.focus(); }, 0);
   }
 
   function showVariation(event) {
@@ -1079,9 +1388,41 @@
     pop.focus();
   }
 
+  function addExternalCashRecord(record) {
+    if (!record || !record.externalId) return;
+    if (cashFlowState.records.some(function (item) { return item.externalId === record.externalId; })) return;
+    cashFlowState.records.push(record);
+    cashFlowState.records.sort(function (a, b) { return a.date.localeCompare(b.date); });
+    rebuildCashSummaryFromRecords();
+    saveClosingState();
+    renderCashFlow();
+    renderSummary();
+    renderDre();
+    renderBudget(selectedBudgetMonth, selectedBudgetYear);
+  }
+
+  function removeExternalCashRecord(externalId) {
+    var previousLength = cashFlowState.records.length;
+    cashFlowState.records = cashFlowState.records.filter(function (record) { return record.externalId !== externalId; });
+    if (cashFlowState.records.length === previousLength) return;
+    rebuildCashSummaryFromRecords();
+    saveClosingState();
+    renderCashFlow();
+    renderSummary();
+    renderDre();
+    renderBudget(selectedBudgetMonth, selectedBudgetYear);
+  }
+
+  window.financialClosing = window.financialClosing || {};
+  window.financialClosing.addExternalRecord = addExternalCashRecord;
+  window.financialClosing.removeExternalRecord = removeExternalCashRecord;
+
   async function boot() {
     var restored = loadClosingState();
+    try { financialCompanies = (await fetch('/api/accounts', { cache: 'no-store' }).then(function (response) { return response.json(); })).companies || []; } catch (error) { financialCompanies = []; }
     await loadFinancialSeed(restored);
+    await loadFinancialMappings();
+    await loadBudgetDatabase();
     await refreshSalesRevenueFromDashboardUploads();
     rebuildCashSummaryFromRecords();
     var pop = document.createElement('div');
@@ -1096,14 +1437,16 @@
     renderCashFlow();
     renderSummary();
     renderDre();
+    renderBudgetEditor(selectedBudgetYear);
     renderBudget();
     renderMapping('');
     bindCashExpandButtons(document.getElementById('dreContainer'));
-    Array.from(document.querySelectorAll('[data-tab="drePanel"], [data-tab="budgetPanel"]')).forEach(function (button) {
+    Array.from(document.querySelectorAll('[data-tab="drePanel"], [data-tab="budgetPanel"], [data-tab="budgetEditorPanel"]')).forEach(function (button) {
       button.addEventListener('click', async function () {
         await refreshSalesRevenueFromDashboardUploads();
         renderDre();
         bindCashExpandButtons(document.getElementById('dreContainer'));
+        renderBudgetEditor(selectedBudgetYear);
         renderBudget();
       });
     });

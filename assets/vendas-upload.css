@@ -54,6 +54,29 @@
   font-weight: 900;
 }
 
+.sales-upload-source-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sales-upload-source-choice button {
+  display: grid;
+  gap: 5px;
+  min-height: 78px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 15px 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sales-upload-source-choice button span { color: var(--text-muted); font-size: .78rem; }
+.sales-upload-source-choice button.active { border-color: var(--accent); background: rgba(79,140,255,.12); box-shadow: 0 0 0 1px var(--accent); }
+.sales-upload-source-choice button:disabled { cursor: not-allowed; opacity: .48; }
+
 .sales-upload-grid {
   display: grid;
   grid-template-columns: minmax(320px, 1.2fr) minmax(280px, .8fr);

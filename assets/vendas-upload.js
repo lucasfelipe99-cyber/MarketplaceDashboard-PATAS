@@ -7,7 +7,14 @@
   var publishButton = document.getElementById('salesIntegrationPublish');
   var statusBox = document.getElementById('salesIntegrationStatus');
   var resultsBox = document.getElementById('salesIntegrationResults');
+  var useCurrentFileButton = document.getElementById('salesUseCurrentFile');
+  var useTreatedBaseButton = document.getElementById('salesUseTreatedBase');
   var integrationPreview = null;
+  var stagedTreatedRows = null;
+  var stagedTreatedName = '';
+  var stagedDiscardedRows = 0;
+  var sourceMode = 'file';
+  var productCategoryBySku = {};
   var integrationMonths = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
   var outputHeaders = ['Marketplace', 'Marketplace venda', 'SKU', 'Id anúncio', 'Data', 'Categoria',
     'Sub Categoria', 'Valor', 'Tag', 'Descrição', 'Categoria2', 'Datatype', 'Record Date', 'Full Data'];
@@ -30,8 +37,41 @@
     statusBox.innerHTML = '<strong>' + escapeHtml(title) + '</strong><p>' + escapeHtml(message) + '</p>';
   }
 
+  function hasStagedTreatedRows() {
+    return Array.isArray(stagedTreatedRows) && stagedTreatedRows.length > 1;
+  }
+
+  function selectSource(mode) {
+    sourceMode = mode === 'treated' && hasStagedTreatedRows() ? 'treated' : 'file';
+    useCurrentFileButton.classList.toggle('active', sourceMode === 'file');
+    useTreatedBaseButton.classList.toggle('active', sourceMode === 'treated');
+    integrationPreview = null;
+    publishButton.disabled = true;
+    resultsBox.hidden = true;
+    if (sourceMode === 'treated') setStatus('Base tratada selecionada', stagedTreatedName + ' está pronta para leitura e conferência.' + (stagedDiscardedRows ? ' ' + stagedDiscardedRows + ' linha(s) de cabeçalho ou texto foram descartadas.' : ''), 'success');
+    else setStatus('Subir arquivo atual', 'Selecione um arquivo do computador e clique em “Ler e conferir arquivo”.', '');
+  }
+
   function normalized(value) {
     return String(value || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
+
+  function stagedNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    return parseNumber(value);
+  }
+
+  async function loadProductCategories() {
+    var response = await fetch('/api/product-master', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Não foi possível carregar as categorias dos SKUs.');
+    var master = await response.json();
+    var categoryNames = {};
+    (master.categories || []).forEach(function (category) { categoryNames[category.id] = category.name; });
+    productCategoryBySku = {};
+    Object.keys(master.skus || {}).forEach(function (sku) {
+      var item = master.skus[sku];
+      if (item.categoryId && categoryNames[item.categoryId]) productCategoryBySku[sku] = categoryNames[item.categoryId];
+    });
   }
 
   function headerIndex(headers, name) {
@@ -70,7 +110,13 @@
 
   function cellNumber(value, label, rowNumber) {
     if (value === '' || value == null) return 0;
+    if (typeof value === 'number') {
+      if (Number.isFinite(value)) return value;
+      throw new Error('Valor não numérico em "' + label + '", linha ' + rowNumber + '.');
+    }
     var text = String(value).trim();
+    // Nunca interpretar o próprio nome da coluna como valor financeiro.
+    if (normalized(text) === normalized(label)) return 0;
     if (!text || /^(?:-|–|—|n\/?a|não se aplica)$/i.test(text) || /^R\$\s*(?:-|–|—)$/.test(text)) return 0;
     var parsed = parseNumber(value);
     if (!Number.isFinite(parsed)) throw new Error('Valor não numérico em "' + label + '", linha ' + rowNumber + '.');
@@ -100,6 +146,21 @@
 
     rows.slice(1).forEach(function (row, rowIndex) {
       if (!row || !row.some(function (cell) { return String(cell || '').trim(); })) return;
+      var matchingHeaderCells = row.reduce(function (total, cell, cellIndex) {
+        return total + (normalized(cell) && normalized(cell) === normalized(headers[cellIndex]) ? 1 : 0);
+      }, 0);
+      if (matchingHeaderCells >= 2) return;
+      // Alguns relatórios do Mercado Livre repetem o cabeçalho no meio dos dados.
+      // Ele nunca deve ser interpretado como uma venda nem passar pela validação numérica.
+      var repeatedHeader = normalized(row[indexes.SKU]) === 'sku' ||
+        normalized(row[indexes.Data]) === 'data' ||
+        metricRules.some(function (rule) {
+          var metricIndex = indexes[rule[0]];
+          if (metricIndex < 0) return false;
+          var cell = normalized(row[metricIndex]);
+          return cell === normalized(rule[0]) || (rule[3] || []).some(function (alias) { return cell === normalized(alias); });
+        });
+      if (repeatedHeader) return;
       var date = salesDate(row[indexes.Data]);
       if (!date) throw new Error('Data inválida na linha ' + (rowIndex + 2) + '.');
       if (date.getUTCFullYear() !== currentYear) {
@@ -115,7 +176,9 @@
       var description = String(row[indexes['Título do anúncio']] || '').trim();
       metricRules.forEach(function (rule) {
         var value = indexes[rule[0]] < 0 ? 0 : cellNumber(row[indexes[rule[0]]], rule[0], rowIndex + 2);
-        var key = [dateIso, sku, marketplace, marketplaceSale, rule[1], rule[2]].join('\u001f');
+        // O anúncio e a empresa fazem parte da identidade da venda. Sem o anúncio,
+        // dois anúncios do mesmo SKU no mesmo dia poderiam ser consolidados juntos.
+        var key = [dateIso, sku, ad, marketplace, marketplaceSale, rule[1], rule[2]].join('\u001f');
         var group = groups.get(key) || {
           marketplace: marketplace, marketplaceSale: marketplaceSale, sku: sku, ad: ad, date: dateIso,
           category: rule[1], subcategory: rule[2], value: 0, description: description
@@ -129,7 +192,7 @@
     var generatedAt = new Date().toISOString();
     var generatedRows = Array.from(groups.values()).map(function (item) {
       return [item.marketplace, item.marketplaceSale, item.sku, item.ad, item.date, item.category,
-        item.subcategory, item.value, '', item.description, '', 'Actual', generatedAt, item.date];
+        item.subcategory, item.value, '', item.description, productCategoryBySku[item.sku] || '', 'Actual', generatedAt, item.date];
     });
     generatedRows.sort(function (a, b) {
       return String(a[4]).localeCompare(String(b[4])) || String(a[2]).localeCompare(String(b[2])) ||
@@ -202,8 +265,8 @@
     return new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
   }
 
-  async function publishIntegration() {
-    var password = passwordInput.value;
+  async function publishIntegration(passwordOverride, mergeChannel) {
+    var password = typeof passwordOverride === 'string' ? passwordOverride : passwordInput.value;
     if (!password) {
       setStatus('Informe a senha', 'A senha administrativa é necessária para publicar as bases mensais.', 'error');
       return;
@@ -216,6 +279,24 @@
       for (var index = 0; index < monthKeys.length; index += 1) {
         var month = monthKeys[index];
         var monthRows = integrationPreview.byMonth[month];
+        if (mergeChannel && typeof loadSalesHistoryRowsByMonth === 'function') {
+          await loadSalesHistoryRowsByMonth();
+          var existing = dashboardState.salesHistoryRowsByMonth && dashboardState.salesHistoryRowsByMonth[month];
+          if (existing && Array.isArray(existing.dataRows) && existing.dataRows.length) {
+            var existingHeaders = existing.headers || outputHeaders;
+            var marketplaceIndex = headerIndex(existingHeaders, 'Marketplace');
+            var saleIndex = headerIndex(existingHeaders, 'Marketplace venda');
+            var datatypeIndex = headerIndex(existingHeaders, 'Datatype');
+            var targetMarketplace = String(monthRows[1] && monthRows[1][0] || '');
+            var targetSale = String(monthRows[1] && monthRows[1][1] || '');
+            var preserved = existing.dataRows.filter(function (row) {
+              var sameChannel = normalized(row[marketplaceIndex]) === normalized(targetMarketplace) && normalized(row[saleIndex]) === normalized(targetSale);
+              var actual = datatypeIndex < 0 || normalized(row[datatypeIndex]) === 'actual';
+              return !(sameChannel && actual);
+            });
+            monthRows = [outputHeaders].concat(preserved, monthRows.slice(1));
+          }
+        }
         setStatus('Publicando bases', 'Mês ' + (index + 1) + ' de ' + monthKeys.length + ': ' +
           (integrationMonths[Number(month) - 1] || month) + '.', '');
         var fileName = 'Base_de_Dados_' + integrationPreview.currentYear + '_' + String(month).padStart(2, '0') + '.csv';
@@ -248,18 +329,37 @@
     }
   }
 
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files[0]) selectSource('file');
+  });
+
+  useCurrentFileButton.addEventListener('click', function () { selectSource('file'); });
+  useTreatedBaseButton.addEventListener('click', function () {
+    if (!hasStagedTreatedRows()) {
+      selectSource('file');
+      setStatus('Nenhuma base tratada disponível', 'Abra o Tratador de Vendas, trate um relatório e clique em “Enviar para Subir Base de Vendas”.', '');
+      return;
+    }
+    selectSource('treated');
+  });
+
   previewButton.addEventListener('click', async function () {
     var file = fileInput.files[0];
-    if (!file) {
+    if (sourceMode === 'file' && !file) {
       setStatus('Selecione um arquivo', 'Escolha o arquivo RESUMO_VENDAS_E_VARIAÇÃO antes de continuar.', 'error');
       return;
     }
     try {
-      validateFile(file);
+      if (sourceMode === 'file') validateFile(file);
       previewButton.disabled = true;
       publishButton.disabled = true;
       setStatus('Lendo arquivo', 'Convertendo as vendas para o formato da Base de Dados.', '');
-      integrationPreview = buildIntegration(await readRowsFromFile(file), file.name);
+      await loadProductCategories();
+      if (sourceMode === 'treated' && !hasStagedTreatedRows()) {
+        selectSource('file');
+        throw new Error('Nenhuma base tratada está disponível. Trate um relatório antes de continuar.');
+      }
+      integrationPreview = sourceMode === 'treated' ? buildIntegration(stagedTreatedRows, stagedTreatedName) : buildIntegration(await readRowsFromFile(file), file.name);
       renderPreview(integrationPreview);
     } catch (error) {
       integrationPreview = null;
@@ -271,4 +371,58 @@
   });
 
   publishButton.addEventListener('click', publishIntegration);
+  window.salesBaseIntegration = {
+    stageTreatedRows: function (rows, fileName) {
+      stagedDiscardedRows = 0;
+      if (Array.isArray(rows) && rows.length) {
+        var stageHeaders = rows[0].map(function (header) { return String(header || '').trim(); });
+        var stageMetricIndexes = metricRules.map(function (rule) { return metricHeaderIndex(stageHeaders, rule); }).filter(function (index) { return index >= 0; });
+        var stageUnitsIndex = headerIndex(stageHeaders, 'Unidades');
+        var stageTitleIndex = headerIndex(stageHeaders, 'Título do anúncio');
+        var stagePriceIndex = headerIndex(stageHeaders, 'Preço unitário de venda do anúncio (BRL)');
+        var cleanRows = rows.slice(1).filter(function (row) {
+          var repeated = row.reduce(function (total, cell, index) { return total + (normalized(cell) && normalized(cell) === normalized(stageHeaders[index]) ? 1 : 0); }, 0) >= 2;
+          if (repeated) { stagedDiscardedRows += 1; return false; }
+          var numeric = stageMetricIndexes.every(function (index) {
+            var value = row[index];
+            if (value === '' || value == null) return true;
+            return Number.isFinite(stagedNumber(value));
+          });
+          var hasSaleFields = stageUnitsIndex < 0 || stageTitleIndex < 0 || stagePriceIndex < 0 ||
+            (stagedNumber(row[stageUnitsIndex]) > 0 && String(row[stageTitleIndex] || '').trim() && stagedNumber(row[stagePriceIndex]) > 0);
+          numeric = numeric && hasSaleFields;
+          if (!numeric) stagedDiscardedRows += 1;
+          return numeric;
+        });
+        stagedTreatedRows = cleanRows.length ? [stageHeaders].concat(cleanRows) : null;
+      } else stagedTreatedRows = null;
+      stagedTreatedName = fileName || 'RESUMO VENDAS E VARIAÇÃO tratado';
+      useTreatedBaseButton.disabled = !hasStagedTreatedRows();
+      if (hasStagedTreatedRows()) {
+        selectSource('treated');
+        return true;
+      }
+      selectSource('file');
+      setStatus('Nenhuma venda válida foi preparada', 'Volte ao Tratador de Vendas e confira o relatório antes de enviar novamente.', 'error');
+      return false;
+    },
+    prepareTreatedRows: async function (rows, fileName) {
+      await loadProductCategories();
+      if (Array.isArray(rows) && rows.length > 1) {
+        var treatedHeaders = rows[0] || [];
+        var treatedUnitsIndex = headerIndex(treatedHeaders, 'Unidades');
+        var treatedSkuIndex = headerIndex(treatedHeaders, 'SKU');
+        rows = rows.filter(function (row, index) {
+          if (index === 0) return true;
+          return !(treatedUnitsIndex >= 0 && normalized(row[treatedUnitsIndex]) === 'unidades') &&
+            !(treatedSkuIndex >= 0 && normalized(row[treatedSkuIndex]) === 'sku');
+        });
+      }
+      integrationPreview = buildIntegration(rows, (fileName || 'Relatório tratado') + ' · conversor v13');
+      renderPreview(integrationPreview);
+      return integrationPreview;
+    },
+    publishPrepared: function (password) { return publishIntegration(password, true); },
+    hasPreparedData: function () { return !!integrationPreview; }
+  };
 })();

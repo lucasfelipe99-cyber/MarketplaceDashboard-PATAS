@@ -201,16 +201,13 @@
       '<div class="pricing-field"><label>Custo do produto</label><input id="pricingCmv" type="number" min="0" step=".01" required></div>' +
       '<div class="pricing-field" id="pricingSalePriceField"><label>Preço de venda desejado</label><input id="pricingSalePrice" type="number" min="0" step=".01" value="49.90"></div>' +
       '<div class="pricing-field" id="pricingMarginField" hidden><label>Margem desejada (%)</label><input id="pricingMargin" type="number" min="0" max="99" step=".01" value="20"></div>' +
-      '<div class="pricing-field"><label>Peso real (kg)</label><input id="pricingWeight" type="number" min="0" step=".001" value=".5"></div>' +
-      '<div class="pricing-field"><label>Altura (cm)</label><input id="pricingHeight" type="number" min="0" step=".01" value="0"></div>' +
-      '<div class="pricing-field"><label>Largura (cm)</label><input id="pricingWidth" type="number" min="0" step=".01" value="0"></div>' +
-      '<div class="pricing-field"><label>Comprimento (cm)</label><input id="pricingLength" type="number" min="0" step=".01" value="0"></div>' +
-      '<div class="pricing-field"><label>Responsável</label><input id="pricingUser" required value="' + escapeHtml(localStorage.getItem('pricingLastUser') || '') + '"></div>' +
+      '<input id="pricingWeight" type="hidden" value="0"><input id="pricingHeight" type="hidden" value="0"><input id="pricingWidth" type="hidden" value="0"><input id="pricingLength" type="hidden" value="0">' +
       '<div class="pricing-mode wide"><strong>Calcular por</strong><label class="pricing-mode-option"><input type="radio" name="pricingMode" value="price" checked><span><b>Preço de venda</b><small>Informe o preço e compare a margem resultante</small></span></label><label class="pricing-mode-option"><input type="radio" name="pricingMode" value="margin"><span><b>Margem desejada</b><small>Informe a margem e calcule o preço ideal</small></span></label></div>' +
       '<div class="pricing-market-select wide"><strong>Marketplaces exibidos</strong>' + platforms.map(function (platform) { return '<label><input class="pricing-market-check" type="checkbox" value="' + platform.id + '" checked> ' + platform.label + '</label>'; }).join('') + '</div>' +
       '<div class="pricing-actions"><button class="pricing-button primary" type="submit">Calcular e salvar última precificação</button></div></form><div class="pricing-status" id="pricingSaveStatus"></div></section>' +
+      '<section class="pricing-card"><div id="pricingCompareTable"></div></section>' +
       '<section class="pricing-card pricing-config"><div class="pricing-config-title"><strong>Configurações utilizadas por marketplace</strong><span>Altere os percentuais para simular; a tabela é atualizada automaticamente.</span></div><div id="pricingConfigGrid"></div></section>' +
-      '<section class="pricing-card"><div id="pricingCompareTable"></div></section></div>';
+      '<section class="pricing-card pricing-product-specs"><div class="pricing-config-title"><strong>Dados logísticos do produto</strong><span>Informações carregadas automaticamente do cadastro do SKU.</span></div><div id="pricingProductSpecs"></div></section></div>';
 
     function selectedIds() {
       return Array.from(document.querySelectorAll('.pricing-market-check:checked')).map(function (input) { return input.value; });
@@ -227,6 +224,15 @@
     function consideredWeight() {
       var cubed = number(document.getElementById('pricingHeight').value) * number(document.getElementById('pricingWidth').value) * number(document.getElementById('pricingLength').value) / 6000;
       return Math.max(number(document.getElementById('pricingWeight').value), cubed);
+    }
+    function renderProductSpecs(info) {
+      info = info || {};
+      var cubed = number(info.height) * number(info.width) * number(info.length) / 6000;
+      var freightWeight = Math.max(number(info.realWeight), cubed);
+      document.getElementById('pricingProductSpecs').innerHTML = '<div class="pricing-spec-grid">' +
+        [['Peso real', number(info.realWeight).toLocaleString('pt-BR', { maximumFractionDigits: 3 }) + ' kg'], ['Altura', number(info.height).toLocaleString('pt-BR') + ' cm'], ['Largura', number(info.width).toLocaleString('pt-BR') + ' cm'], ['Comprimento', number(info.length).toLocaleString('pt-BR') + ' cm'], ['Peso cubado', cubed.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) + ' kg'], ['Peso usado no frete', freightWeight.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) + ' kg']].map(function (item) {
+          return '<article><span>' + item[0] + '</span><strong>' + item[1] + '</strong></article>';
+        }).join('') + '</div>';
     }
     function renderConfig() {
       document.getElementById('pricingConfigGrid').innerHTML = platforms.map(function (platform) {
@@ -298,6 +304,7 @@
       document.getElementById('pricingHeight').value = info.height || 0;
       document.getElementById('pricingWidth').value = info.width || 0;
       document.getElementById('pricingLength').value = info.length || 0;
+      renderProductSpecs(info);
       recalculate();
       var previous = database.lastPricing[sku];
       if (askPrevious && previous && window.confirm('Foi encontrada uma precificação anterior. Deseja carregá-la?')) applyLast(previous);
@@ -329,8 +336,9 @@
       status.textContent = 'Salvando produto e última precificação...';
       try {
         var sku = document.getElementById('pricingSku').value.trim();
-        var user = document.getElementById('pricingUser').value.trim();
-        if (!sku || !user || number(document.getElementById('pricingCmv').value) <= 0) throw new Error('Informe SKU, responsável e custo do produto.');
+        var existingCost = (database.costs || {})[sku] || {};
+        var user = existingCost.responsible || 'Sistema';
+        if (!sku || number(document.getElementById('pricingCmv').value) <= 0) throw new Error('Informe o SKU e o custo do produto.');
         await saveDatabase({
           action: 'upsert-cost', sku: sku, description: document.getElementById('pricingDescription').value,
           category: ((database.costs || {})[sku] || {}).category || '', productCost: document.getElementById('pricingCmv').value,
@@ -342,7 +350,6 @@
           calculationMode: mode(), salePrice: document.getElementById('pricingSalePrice').value,
           desiredMargin: document.getElementById('pricingMargin').value, selectedMarketplaces: selectedIds(), marketplaceSettings: settings
         });
-        localStorage.setItem('pricingLastUser', user);
         status.className = 'pricing-status success';
         status.textContent = 'Última precificação salva para este SKU.';
         recalculate();
@@ -352,6 +359,7 @@
       }
     });
     updateModeFields();
+    renderProductSpecs({});
     recalculate();
   }
 

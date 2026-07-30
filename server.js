@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { transformShopee } = require('./lib/shopee-transform');
+const { transformTikTok, transformAmazon, transformMagalu } = require('./lib/marketplace-transforms');
 
 
 function loadLocalEnv(filePath) {
@@ -46,14 +48,35 @@ const metadataPath = path.join(dataDir, 'metadata.json');
 const legacyMetadataPath = path.join(legacyDataDir, 'metadata.json');
 const productMasterPath = path.join(dataDir, 'product-master.json');
 const inventoryPath = path.join(dataDir, 'inventory.json');
+const inventoryFullPath = path.join(dataDir, 'inventory-full.json');
+const salesTreatersPath = path.join(dataDir, 'sales-treaters.json');
 const pricingRulesPath = path.join(dataDir, 'pricing-rules.json');
 const pricingDatabasePath = path.join(dataDir, 'pricing-database.json');
+const budgetsPath = path.join(dataDir, 'budgets.json');
+const accountsPath = path.join(dataDir, 'accounts.json');
+const financialMappingPath = path.join(dataDir, 'de_para_categoria_classificacao.csv');
 
 const intelligentAnalysisCachePath = path.join(dataDir, 'ai-intelligent-cache.json');
 const intelligentAnalysisFallbackCachePath = path.join(os.tmpdir(), 'marketplace-ai-intelligent-cache.json');
 const allowedBaseExtensions = new Set(['.xlsx', '.xls', '.csv']);
-const allowedAssetExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico', '.css', '.js', '.json']);
+const allowedAssetExtensions = new Set(['.html', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico', '.css', '.js', '.json']);
 const monthKeys = new Set(Array.from({ length: 12 }, (_, index) => String(index + 1)));
+const baseFinancialOptions = [
+  ['Cashback', 'Receitas', 1], ['Juros Passivos', 'Receitas', 1], ['Outras receitas', 'Receitas', 1],
+  ['Recebimentos', 'Receitas', 1], ['Rendimentos Bancários', 'Receitas', 1], ['Resgates', 'Receitas', 1],
+  ['Vendas', 'Receitas', 1], ['Rendimentos', 'Juros Sobre Investimento', 2],
+  ['Fornecedor de Mercadoria', 'Produtos', 3], ['Insumos de Fabricação', 'Produtos', 3],
+  ['Embalagens', 'Embalagem', 4], ['DAS', 'Imposto sobre Mercadoria Vendida', 5],
+  ['Salários', 'Despesas com pessoal', 6], ['Refeições', 'Despesas com pessoal', 6],
+  ['Pró-Labore', 'Pró-labore', 7], ['Limpeza', 'Manutenção Operacional', 8],
+  ['Aluguéis e condomínio', 'Aluguel', 9], ['Contabilidade', 'Serviços', 10],
+  ['ADS Mercado Livre', 'Despesas com ADS', 11], ['Frete - FULL', 'Despesas com FULL', 12],
+  ['Frete', 'Despesas Comerciais', 13], ['Manutenção Predial', 'Manutenção', 14],
+  ['Tiny', 'Gastos com Sistema', 15], ['Combustível', 'Gastos com veículos', 16],
+  ['Tarifas Bancárias', 'Despesas Financeiras', 17], ['Empréstimo Bancário', 'Amortização (Empréstimos)', 18],
+  ['Investimentos', 'Investimentos', 19], ['Parcelamento de DAS', 'Parcelamentos', 21],
+  ['Transferência', 'Transferência', 99]
+].map((item, index) => ({ id: 'base-financial-' + index, category: item[0], classification: item[1], order: item[2] }));
 
 const copilotLastRunByIp = new Map();
 let intelligentAnalysisPromise = null;
@@ -276,6 +299,13 @@ function getPublishedMetadata(month) {
   const metadata = readMetadata();
   const areaMetadata = metadata.areas.area1 || { months: {} };
   const monthMetadata = areaMetadata.months[month] || {};
+  const forecastMetadata = metadata.forecast && String(metadata.forecast.targetMonth) === String(month)
+    ? metadata.forecast
+    : null;
+  const rowsUpdatedAt = [monthMetadata.rowsUpdatedAt, forecastMetadata && forecastMetadata.generatedAt]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
   const filePath = resolveDataFilePath(monthMetadata.storedName || '');
 
   if (!monthMetadata.storedName || !fs.existsSync(filePath)) {
@@ -289,7 +319,7 @@ function getPublishedMetadata(month) {
     storedName: monthMetadata.storedName,
     rowsName: monthMetadata.rowsName,
     updatedAt: monthMetadata.updatedAt,
-    rowsUpdatedAt: monthMetadata.rowsUpdatedAt,
+    rowsUpdatedAt,
     size: monthMetadata.size,
     url: '/data/' + encodeURIComponent(monthMetadata.storedName),
     rowsUrl: monthMetadata.rowsName && fs.existsSync(resolveDataFilePath(monthMetadata.rowsName))
@@ -414,6 +444,327 @@ function writeJsonWithRetry(filePath, value, attempts = 10) {
   }
 
   throw lastError;
+}
+
+function readBudgets() {
+  if (!fs.existsSync(budgetsPath)) {
+    return { version: 1, years: {}, updatedAt: null };
+  }
+  try {
+    const value = JSON.parse(fs.readFileSync(budgetsPath, 'utf8'));
+    return {
+      version: 1,
+      years: value.years && typeof value.years === 'object' ? value.years : {},
+      updatedAt: value.updatedAt || null
+    };
+  } catch (error) {
+    return { version: 1, years: {}, updatedAt: null };
+  }
+}
+
+function readFinancialMappingFileOptions() {
+  if (!fs.existsSync(financialMappingPath)) return [];
+  return fs.readFileSync(financialMappingPath, 'utf8').split(/\r?\n/).slice(1).map((line) => {
+    const columns = line.split(',');
+    return {
+      category: String(columns[0] || '').trim(),
+      classification: String(columns[1] || '').trim(),
+      order: Number(columns[2]) || 999
+    };
+  }).filter((item) => item.category && item.classification);
+}
+
+function readFinancialOptions() {
+  const state = readAccounts();
+  const saved = Array.isArray(state.financialOptions) ? state.financialOptions : [];
+  const fileOptions = readFinancialMappingFileOptions();
+  const source = saved.length ? saved : fileOptions.length ? fileOptions : baseFinancialOptions;
+  return source.map((item, index) => ({
+    id: String(item.id || 'financial-option-' + index),
+    category: String(item.category || '').trim(),
+    classification: String(item.classification || '').trim(),
+    order: Number(item.order) || index + 1
+  })).filter((item) => item.category && item.classification && item.category.toLocaleLowerCase('pt-BR') !== 'projetos patas fieis' && item.category.toLocaleLowerCase('pt-BR') !== 'projetos patas fiéis');
+}
+
+function mergeAutomaticFinancialCompanies(savedCompanies) {
+  const companies = Array.isArray(savedCompanies) ? savedCompanies.slice() : [];
+  const registeredAccounts = getRegisteredMarketplaceAccounts();
+  const byName = new Map(companies.map((item) => [String(item.name || '').trim().toLocaleLowerCase('pt-BR'), item]));
+  registeredAccounts.forEach((account) => {
+    const name = String(account.account || '').trim();
+    const key = name.toLocaleLowerCase('pt-BR');
+    if (!name || byName.has(key)) return;
+    const item = {
+      id: 'sales-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 20),
+      name,
+      document: '',
+      source: 'sales',
+      marketplaces: [String(account.marketplace || '').trim()].filter(Boolean),
+      updatedAt: new Date().toISOString()
+    };
+    companies.push(item);
+    byName.set(key, item);
+  });
+  companies.forEach((company) => {
+    const linked = registeredAccounts.filter((account) => String(account.account || '').trim().toLocaleLowerCase('pt-BR') === String(company.name || '').trim().toLocaleLowerCase('pt-BR'));
+    if (linked.length) {
+      company.source = 'sales';
+      company.marketplaces = Array.from(new Set(linked.map((item) => String(item.marketplace || '').trim()).filter(Boolean)));
+    }
+  });
+  return companies.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+}
+
+function readAccounts() {
+  if (!fs.existsSync(accountsPath)) {
+    return { version: 3, companies: mergeAutomaticFinancialCompanies([]), counterparties: [], payables: [], receivables: [], bankAccounts: [], paymentMethods: [], financialOptions: [], updatedAt: null };
+  }
+  try {
+    const value = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+    return {
+      version: 3,
+      companies: mergeAutomaticFinancialCompanies(value.companies),
+      counterparties: Array.isArray(value.counterparties) ? value.counterparties : [],
+      payables: Array.isArray(value.payables) ? value.payables : [],
+      receivables: Array.isArray(value.receivables) ? value.receivables : [],
+      bankAccounts: Array.isArray(value.bankAccounts) ? value.bankAccounts : [],
+      paymentMethods: Array.isArray(value.paymentMethods) ? value.paymentMethods : [],
+      financialOptions: Array.isArray(value.financialOptions) ? value.financialOptions : [],
+      updatedAt: value.updatedAt || null
+    };
+  } catch (error) {
+    return { version: 3, companies: mergeAutomaticFinancialCompanies([]), counterparties: [], payables: [], receivables: [], bankAccounts: [], paymentMethods: [], financialOptions: [], updatedAt: null };
+  }
+}
+
+function addMonthsToAccountDate(isoDate, months) {
+  const parts = String(isoDate || '').split('-').map(Number);
+  const target = new Date(Date.UTC(parts[0], parts[1] - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  const day = Math.min(parts[2], lastDay);
+  return [target.getUTCFullYear(), String(target.getUTCMonth() + 1).padStart(2, '0'), String(day).padStart(2, '0')].join('-');
+}
+
+function cleanAccountRecord(payload, type, current) {
+  const amount = Number(payload.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Informe um valor maior que zero.');
+  const dueDate = String(payload.dueDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error('Informe uma data de vencimento valida.');
+  const description = String(payload.description || '').trim();
+  if (!description) throw new Error('Informe a descricao.');
+  const companyId = String(payload.companyId || current && current.companyId || '').trim();
+  return {
+    id: current && current.id || crypto.randomUUID(),
+    type,
+    companyId,
+    description,
+    counterpartyId: String(payload.counterpartyId || '').trim(),
+    dueDate,
+    competenceDate: String(payload.competenceDate || dueDate).trim(),
+    amount: Math.round(amount * 100) / 100,
+    classification: String(payload.classification || '').trim(),
+    category: String(payload.category || '').trim(),
+    account: String(payload.account || '').trim(),
+    bankAccountId: String(payload.bankAccountId || '').trim(),
+    paymentMethodId: String(payload.paymentMethodId || '').trim(),
+    installmentGroupId: String(payload.installmentGroupId || current && current.installmentGroupId || '').trim(),
+    installmentNumber: Math.max(1, Number(payload.installmentNumber) || current && current.installmentNumber || 1),
+    installmentCount: Math.max(1, Number(payload.installmentCount) || current && current.installmentCount || 1),
+    document: String(payload.document || '').trim(),
+    notes: String(payload.notes || '').trim(),
+    status: current && current.status || 'open',
+    settledAt: current && current.settledAt || '',
+    createdAt: current && current.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function handleAccountsUpdate(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, 8 * 1024 * 1024);
+    const state = readAccounts();
+    if (payload.action === 'upsert-company') {
+      const name = String(payload.name || '').trim();
+      if (!name) return sendJson(response, 400, { error: 'Informe o nome da empresa.' });
+      const id = String(payload.id || '').trim();
+      const duplicate = state.companies.find((item) => item.id !== id && String(item.name || '').trim().toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'));
+      if (duplicate) return sendJson(response, 400, { error: 'Esta empresa já está cadastrada.' });
+      const current = state.companies.find((item) => item.id === id);
+      const item = { id: current && current.id || crypto.randomUUID(), name, document: String(payload.document || '').trim(), updatedAt: new Date().toISOString() };
+      if (current) Object.assign(current, item); else state.companies.push(item);
+    } else if (payload.action === 'upsert-counterparty') {
+      const name = String(payload.name || '').trim();
+      const kind = ['client', 'supplier', 'both'].includes(payload.kind) ? payload.kind : 'both';
+      if (!name) return sendJson(response, 400, { error: 'Informe o nome.' });
+      const id = String(payload.id || '').trim();
+      const current = state.counterparties.find((item) => item.id === id);
+      const item = {
+        id: current && current.id || crypto.randomUUID(),
+        name,
+        kind,
+        document: String(payload.document || '').trim(),
+        email: String(payload.email || '').trim(),
+        phone: String(payload.phone || '').trim(),
+        updatedAt: new Date().toISOString()
+      };
+      if (current) Object.assign(current, item); else state.counterparties.push(item);
+    } else if (payload.action === 'upsert-financial-config') {
+      const configType = payload.configType === 'paymentMethod' ? 'paymentMethod' : 'bankAccount';
+      const collection = configType === 'paymentMethod' ? state.paymentMethods : state.bankAccounts;
+      const name = String(payload.name || '').trim();
+      if (!name) return sendJson(response, 400, { error: 'Informe o nome do cadastro.' });
+      const normalized = name.toLocaleLowerCase('pt-BR');
+      const duplicate = collection.find((item) => String(item.name || '').trim().toLocaleLowerCase('pt-BR') === normalized && item.id !== String(payload.id || ''));
+      if (duplicate) return sendJson(response, 400, { error: 'Este cadastro ja existe.' });
+      const current = collection.find((item) => item.id === String(payload.id || ''));
+      const item = { id: current && current.id || crypto.randomUUID(), name, updatedAt: new Date().toISOString() };
+      if (current) Object.assign(current, item); else collection.push(item);
+    } else if (payload.action === 'upsert-financial-option') {
+      if (!state.financialOptions.length) {
+        const seed = readFinancialMappingFileOptions();
+        state.financialOptions = (seed.length ? seed : baseFinancialOptions).filter((item) => !/^projetos patas fi[eé]is$/i.test(String(item.category || ''))).map((item, index) => ({ ...item, id: crypto.randomUUID(), order: Number(item.order) || index + 1 }));
+      }
+      const classification = String(payload.classification || '').trim();
+      const category = String(payload.category || '').trim();
+      if (!classification || !category) return sendJson(response, 400, { error: 'Informe a classificacao e a categoria.' });
+      const id = String(payload.id || '').trim();
+      const current = state.financialOptions.find((item) => item.id === id);
+      const duplicate = state.financialOptions.find((item) => item.id !== id && String(item.classification).toLocaleLowerCase('pt-BR') === classification.toLocaleLowerCase('pt-BR') && String(item.category).toLocaleLowerCase('pt-BR') === category.toLocaleLowerCase('pt-BR'));
+      if (duplicate) return sendJson(response, 400, { error: 'Esta categoria ja existe nesta classificacao.' });
+      const previousClassification = current ? current.classification : '';
+      const previousCategory = current ? current.category : '';
+      const requestedOrder = Number(payload.order);
+      const item = { id: current && current.id || crypto.randomUUID(), classification, category, order: current && current.order || (Number.isFinite(requestedOrder) && requestedOrder > 0 ? requestedOrder : state.financialOptions.length + 1) };
+      if (current) Object.assign(current, item); else state.financialOptions.push(item);
+      if (current) {
+        state.payables.concat(state.receivables).forEach((record) => {
+          if (record.classification === previousClassification && record.category === previousCategory) {
+            record.classification = classification;
+            record.category = category;
+            record.updatedAt = new Date().toISOString();
+          }
+        });
+      }
+    } else if (payload.action === 'rename-financial-classification') {
+      if (!state.financialOptions.length) {
+        const seed = readFinancialMappingFileOptions();
+        state.financialOptions = (seed.length ? seed : baseFinancialOptions).filter((item) => !/^projetos patas fi[eé]is$/i.test(String(item.category || ''))).map((item, index) => ({ ...item, id: crypto.randomUUID(), order: Number(item.order) || index + 1 }));
+      }
+      const previousName = String(payload.previousName || '').trim();
+      const name = String(payload.name || '').trim();
+      if (!previousName || !name) return sendJson(response, 400, { error: 'Informe a classificacao.' });
+      let changed = 0;
+      state.financialOptions.forEach((item) => { if (item.classification === previousName) { item.classification = name; changed += 1; } });
+      if (!changed) return sendJson(response, 404, { error: 'Classificacao nao encontrada.' });
+      state.payables.concat(state.receivables).forEach((record) => {
+        if (record.classification === previousName) { record.classification = name; record.updatedAt = new Date().toISOString(); }
+      });
+    } else if (payload.action === 'upsert-account') {
+      const type = payload.type === 'receivable' ? 'receivable' : 'payable';
+      const collection = type === 'payable' ? state.payables : state.receivables;
+      const current = collection.find((item) => item.id === String(payload.id || ''));
+      if (state.companies.length && !state.companies.some((item) => item.id === String(payload.companyId || current && current.companyId || ''))) {
+        return sendJson(response, 400, { error: 'Selecione a empresa correta para o lançamento.' });
+      }
+      const installmentCount = type === 'payable' && !current ? Math.min(120, Math.max(1, Number(payload.installmentCount) || 1)) : 1;
+      if (installmentCount > 1) {
+        const totalCents = Math.round(Number(payload.amount) * 100);
+        if (!Number.isFinite(totalCents) || totalCents <= 0) throw new Error('Informe um valor maior que zero.');
+        const baseCents = Math.floor(totalCents / installmentCount);
+        const groupId = crypto.randomUUID();
+        for (let index = 0; index < installmentCount; index += 1) {
+          const installmentPayload = {
+            ...payload,
+            amount: (baseCents + (index === installmentCount - 1 ? totalCents - baseCents * installmentCount : 0)) / 100,
+            dueDate: addMonthsToAccountDate(payload.dueDate, index),
+            description: String(payload.description || '').trim() + ' (' + (index + 1) + '/' + installmentCount + ')',
+            installmentGroupId: groupId,
+            installmentNumber: index + 1,
+            installmentCount
+          };
+          collection.push(cleanAccountRecord(installmentPayload, type, null));
+        }
+      } else {
+        const item = cleanAccountRecord(payload, type, current);
+        if (current) Object.assign(current, item); else collection.push(item);
+      }
+    } else if (payload.action === 'import-accounts') {
+      const type = payload.type === 'receivable' ? 'receivable' : 'payable';
+      const collection = type === 'payable' ? state.payables : state.receivables;
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (!rows.length || rows.length > 20000) return sendJson(response, 400, { error: 'Nenhum titulo valido para importar.' });
+      if (state.companies.length && !state.companies.some((item) => item.id === String(payload.companyId || ''))) return sendJson(response, 400, { error: 'Selecione a empresa da importação.' });
+      rows.forEach((row) => { row.companyId = String(payload.companyId || row.companyId || ''); });
+      rows.forEach((row) => collection.push(cleanAccountRecord(row, type, null)));
+    } else if (payload.action === 'settle-account') {
+      const type = payload.type === 'receivable' ? 'receivable' : 'payable';
+      const collection = type === 'payable' ? state.payables : state.receivables;
+      const item = collection.find((record) => record.id === String(payload.id || ''));
+      if (!item) return sendJson(response, 404, { error: 'Titulo nao encontrado.' });
+      item.status = 'settled';
+      item.settledAt = String(payload.settledAt || '').trim() || new Date().toISOString().slice(0, 10);
+      item.updatedAt = new Date().toISOString();
+    } else if (payload.action === 'delete-account') {
+      const type = payload.type === 'receivable' ? 'receivable' : 'payable';
+      const collectionName = type === 'payable' ? 'payables' : 'receivables';
+      const collection = state[collectionName];
+      const index = collection.findIndex((record) => record.id === String(payload.id || ''));
+      if (index < 0) return sendJson(response, 404, { error: 'Titulo nao encontrado.' });
+      collection.splice(index, 1);
+    } else {
+      return sendJson(response, 400, { error: 'Acao financeira invalida.' });
+    }
+    state.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(accountsPath, state);
+    sendJson(response, 200, state);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });
+  }
+}
+
+async function handleBudgetsUpdate(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, 4 * 1024 * 1024);
+    if (payload.action !== 'save-year') {
+      return sendJson(response, 400, { error: 'Acao de orcamento invalida.' });
+    }
+    const year = Number(payload.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return sendJson(response, 400, { error: 'Ano do orcamento invalido.' });
+    }
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!rows.length || rows.length > 500) {
+      return sendJson(response, 400, { error: 'O orcamento deve possuir entre 1 e 500 linhas.' });
+    }
+    const cleanRows = rows.map((row, index) => {
+      const label = String(row && row.label || '').trim();
+      const kind = ['classification', 'category', 'standalone'].includes(row && row.kind)
+        ? row.kind
+        : 'category';
+      if (!label) throw new Error(`Linha ${index + 1} sem descricao.`);
+      const values = Array.from({ length: 12 }, (_, monthIndex) => {
+        const number = Number(Array.isArray(row.values) ? row.values[monthIndex] : 0);
+        if (!Number.isFinite(number)) throw new Error(`Valor invalido na linha ${index + 1}.`);
+        return Math.round(number * 100) / 100;
+      });
+      return {
+        id: String(row.id || '').trim() || crypto.randomUUID(),
+        label,
+        kind,
+        parentId: kind === 'category' ? String(row.parentId || '').trim() : '',
+        values
+      };
+    });
+    const state = readBudgets();
+    const updatedAt = new Date().toISOString();
+    state.years[String(year)] = { year, rows: cleanRows, updatedAt };
+    state.updatedAt = updatedAt;
+    writeJsonWithRetry(budgetsPath, state);
+    sendJson(response, 200, state);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });
+  }
 }
 
 function streamRequestToFile(request, filePath, maxBytes) {
@@ -605,6 +956,7 @@ async function handleRowsUpload(request, response) {
 
   try {
     await streamRequestToFile(request, stagingPath, maxUploadBytes);
+    applyProductCategoriesToRowsFile(stagingPath);
     persistStagedFile(stagingPath, rowsPath);
     monthMetadata.rowsName = rowsName;
     monthMetadata.rowsUpdatedAt = new Date().toISOString();
@@ -627,6 +979,310 @@ async function handleRowsUpload(request, response) {
     sendText(response, 500, 'Erro ao congelar os dados do mes: ' + writeError.message);
   } finally {
     fs.rm(stagingPath, { force: true }, () => {});
+  }
+}
+
+function isForecastRow(row, header) {
+  if (!Array.isArray(row)) return false;
+  const index = header.findIndex((value) => String(value || '').trim().toLowerCase() === 'datatype');
+  return index >= 0 && String(row[index] || '').trim().toLowerCase() === 'forecast';
+}
+
+function getForecastStatus() {
+  const metadata = readMetadata();
+  return metadata.forecast || { generated: false };
+}
+
+async function handleForecastPublish(request, response) {
+  if (!requireAdmin(request, response)) return;
+  try {
+    const payload = await collectJsonRequest(request, maxUploadBytes);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const force = payload.force === true;
+    const requestedTargetMonth = normalizeMonth(payload.targetMonth);
+    const requestedTargetYear = Number(payload.targetYear);
+    if (!requestedTargetMonth || !Number.isInteger(requestedTargetYear) || requestedTargetYear < 2020 || requestedTargetYear > 2100) {
+      sendJson(response, 400, { error: 'Selecione um mês e ano válidos para publicar o Forecast.' });
+      return;
+    }
+    const metadata = readMetadata();
+    if (metadata.forecast && metadata.forecast.generated && !force) {
+      sendJson(response, 409, { error: 'O forecast já foi gerado. Use Gerar novamente para substituir a versão atual.', forecast: metadata.forecast });
+      return;
+    }
+    if (rows.length < 2 || !Array.isArray(rows[0])) {
+      sendJson(response, 400, { error: 'Forecast vazio ou em formato inválido.' });
+      return;
+    }
+    const header = rows[0].map((value) => String(value || '').trim());
+    const required = ['Marketplace', 'Marketplace venda', 'SKU', 'Data', 'Categoria', 'Sub Categoria', 'Valor', 'Datatype'];
+    const missing = required.filter((name) => !header.includes(name));
+    if (missing.length) {
+      sendJson(response, 400, { error: 'Colunas ausentes no forecast: ' + missing.join(', ') });
+      return;
+    }
+    const forecastRows = rows.slice(1).filter((row) => isForecastRow(row, header));
+    if (!forecastRows.length) {
+      sendJson(response, 400, { error: 'Nenhuma linha diária com Datatype Forecast foi recebida.' });
+      return;
+    }
+    const dateIndex = header.indexOf('Data');
+    const invalidTargetRows = forecastRows.filter((row) => {
+      const parts = parseAnalysisDateParts(row[dateIndex], Number(requestedTargetMonth), requestedTargetYear);
+      return !parts || Number(parts.month) !== Number(requestedTargetMonth) || Number(parts.year) !== requestedTargetYear;
+    });
+    if (invalidTargetRows.length) {
+      sendJson(response, 400, { error: 'Existem linhas fora do mês selecionado. Recalcule o Forecast após escolher o mês de destino.' });
+      return;
+    }
+    const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+    const published = Object.entries(months).filter((entry) => entry[1] && entry[1].rowsName);
+    if (!published.length) {
+      sendJson(response, 400, { error: 'Suba primeiro o relatório de vendas na plataforma.' });
+      return;
+    }
+    for (const [, item] of published) {
+      const rowsPath = resolveDataFilePath(item.rowsName);
+      if (!fs.existsSync(rowsPath)) continue;
+      const saved = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+      const savedRows = Array.isArray(saved.rows) ? saved.rows : [];
+      if (!savedRows.length) continue;
+      const savedHeader = savedRows[0];
+      saved.rows = [savedHeader].concat(savedRows.slice(1).filter((row) => !isForecastRow(row, savedHeader)));
+      fs.writeFileSync(rowsPath, JSON.stringify(saved));
+    }
+    const targetEntry = published.sort((a, b) => Number(a[0]) - Number(b[0])).pop();
+    const targetMonth = requestedTargetMonth;
+    const target = targetEntry[1];
+    const targetPath = resolveDataFilePath(target.rowsName);
+    const saved = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
+    const targetHeader = saved.rows[0];
+    const sourceIndexes = Object.fromEntries(header.map((name, index) => [name, index]));
+    const normalized = forecastRows.map((row) => targetHeader.map((name) => row[sourceIndexes[name]] == null ? '' : row[sourceIndexes[name]]));
+    saved.rows = saved.rows.concat(normalized);
+    saved.forecastGeneratedAt = new Date().toISOString();
+    fs.writeFileSync(targetPath, JSON.stringify(saved));
+    target.rowsUpdatedAt = saved.forecastGeneratedAt;
+    metadata.forecast = {
+      generated: true,
+      generatedAt: saved.forecastGeneratedAt,
+      rows: normalized.length,
+      targetMonth,
+      targetYear: requestedTargetYear,
+      period: String(payload.period || ''),
+      source: String(payload.source || 'Base de Vendas publicada')
+    };
+    writeJsonWithRetry(metadataPath, metadata);
+    sendJson(response, 200, metadata.forecast);
+    setImmediate(() => ensureIntelligentAnalysis(true).catch(() => {}));
+  } catch (error) {
+    console.error('Erro ao publicar forecast:', error);
+    sendJson(response, 500, { error: error.message || 'Erro ao publicar forecast.' });
+  }
+}
+
+function normalizeAdsText(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function adsDateKey(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value * 86400000));
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+  }
+  const text = String(value == null ? '' : value).trim();
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return match[1] + '-' + match[2] + '-' + match[3];
+  match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) return match[3] + '-' + match[2].padStart(2, '0') + '-' + match[1].padStart(2, '0');
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+function isAdsMetricRow(row, indexes) {
+  const category = normalizeAdsText(row[indexes.category]);
+  const subcategory = normalizeAdsText(row[indexes.subcategory]);
+  return category === 'cliques' || category === 'ads f' ||
+    (category === '03.despesas marketplace' && subcategory === 'publicidade');
+}
+
+function getRegisteredMarketplaceAccounts() {
+  const metadata = readMetadata();
+  const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+  const accounts = new Map();
+  Object.values(months).forEach((month) => {
+    if (!month || !month.rowsName) return;
+    const rowsPath = resolveDataFilePath(month.rowsName);
+    if (!rowsPath || !fs.existsSync(rowsPath)) return;
+    try {
+      const payload = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (rows.length < 2) return;
+      const header = rows[0].map((value) => String(value == null ? '' : value).trim());
+      const findIndex = (aliases) => header.findIndex((name) => aliases.includes(normalizeAdsText(name)));
+      const indexes = {
+        marketplace: findIndex(['marketplace']), sale: findIndex(['marketplace venda']),
+        category: findIndex(['categoria']), subcategory: findIndex(['sub categoria', 'subcategoria']),
+        datatype: findIndex(['datatype'])
+      };
+      if (indexes.marketplace < 0 || indexes.sale < 0) return;
+      rows.slice(1).forEach((row) => {
+        if (indexes.datatype >= 0 && normalizeAdsText(row[indexes.datatype]) === 'forecast') return;
+        const marketplace = String(row[indexes.marketplace] || '').trim();
+        const account = String(row[indexes.sale] || '').trim();
+        if (!marketplace || !account || isAdsMetricRow(row, indexes)) return;
+        const key = normalizeAdsText(marketplace) + '||' + normalizeAdsText(account);
+        if (!accounts.has(key)) accounts.set(key, { marketplace, account });
+      });
+    } catch (error) {
+      console.warn('Não foi possível ler contas de', month.rowsName, error.message);
+    }
+  });
+  return Array.from(accounts.values()).sort((a, b) =>
+    a.marketplace.localeCompare(b.marketplace, 'pt-BR') || a.account.localeCompare(b.account, 'pt-BR'));
+}
+
+async function handleAdsBaseUpload(request, response) {
+  if (!requireAdmin(request, response)) return;
+  try {
+    const payload = await collectJsonRequest(request, maxUploadBytes);
+    const month = normalizeMonth(payload.month);
+    const platform = String(payload.platform || '').trim();
+    const platformKey = normalizeAdsText(platform);
+    const account = String(payload.account || '').trim();
+    const incomingRows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!month || !account || !['mercado livre', 'shopee'].includes(platformKey)) {
+      sendJson(response, 400, { error: 'Selecione um mês e uma plataforma válidos.' });
+      return;
+    }
+    if (!incomingRows.length) {
+      sendJson(response, 400, { error: 'Nenhuma linha de ADS foi recebida.' });
+      return;
+    }
+
+    const metadata = readMetadata();
+    const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+    const monthMetadata = months[month];
+    if (!monthMetadata || !monthMetadata.rowsName) {
+      sendJson(response, 400, { error: 'Publique primeiro a Base de Vendas do mês selecionado.' });
+      return;
+    }
+    const rowsPath = resolveDataFilePath(monthMetadata.rowsName);
+    if (!fs.existsSync(rowsPath)) {
+      sendJson(response, 404, { error: 'A Base de Dados do mês selecionado não foi encontrada.' });
+      return;
+    }
+
+    const saved = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+    const savedRows = Array.isArray(saved.rows) ? saved.rows : [];
+    if (!savedRows.length || !Array.isArray(savedRows[0])) {
+      sendJson(response, 400, { error: 'A Base de Dados publicada não possui cabeçalho válido.' });
+      return;
+    }
+    const header = savedRows[0].map((value) => String(value == null ? '' : value).trim());
+    const headerIndex = (aliases) => header.findIndex((name) => aliases.includes(normalizeAdsText(name)));
+    const indexes = {
+      marketplace: headerIndex(['marketplace']), sale: headerIndex(['marketplace venda']),
+      sku: headerIndex(['sku']), ad: headerIndex(['id anuncio']), date: headerIndex(['data']),
+      category: headerIndex(['categoria']), subcategory: headerIndex(['sub categoria', 'subcategoria']),
+      value: headerIndex(['valor', 'valor completo']), tag: headerIndex(['tag']),
+      description: headerIndex(['descricao']), category2: headerIndex(['categoria2']),
+      datatype: headerIndex(['datatype']), recordDate: headerIndex(['record date']), fullDate: headerIndex(['full data'])
+    };
+    const requiredIndexes = ['marketplace', 'sale', 'sku', 'date', 'category', 'subcategory', 'value', 'datatype'];
+    if (requiredIndexes.some((name) => indexes[name] < 0)) {
+      sendJson(response, 400, { error: 'A Base de Dados publicada não está no formato esperado.' });
+      return;
+    }
+
+    const accountIsRegistered = savedRows.slice(1).some((row) => {
+      const samePlatform = normalizeAdsText(row[indexes.marketplace]) === platformKey;
+      const sameAccount = indexes.sale >= 0 && normalizeAdsText(row[indexes.sale]) === normalizeAdsText(account);
+      const actual = normalizeAdsText(row[indexes.datatype]) !== 'forecast';
+      return samePlatform && sameAccount && actual && !isAdsMetricRow(row, indexes);
+    });
+    if (!accountIsRegistered) {
+      sendJson(response, 400, { error: 'A conta selecionada não está cadastrada na Base de Vendas deste mês.' });
+      return;
+    }
+
+    const skuData = new Map();
+    savedRows.slice(1).forEach((row) => {
+      const sku = normalizeAdsText(row[indexes.sku]);
+      if (!sku) return;
+      const current = skuData.get(sku) || { description: '', category2: '' };
+      if (indexes.description >= 0 && !current.description) current.description = String(row[indexes.description] || '').trim();
+      if (indexes.category2 >= 0 && !current.category2) current.category2 = String(row[indexes.category2] || '').trim();
+      skuData.set(sku, current);
+    });
+
+    const uniqueIncomingRows = [];
+    const incomingKeys = new Set();
+    incomingRows.forEach((row) => {
+      const key = [platformKey, normalizeAdsText(account), normalizeAdsText(row.sku), normalizeAdsText(row.ad),
+        adsDateKey(row.date), normalizeAdsText(row.category), normalizeAdsText(row.subcategory), Number(row.value) || 0].join('||');
+      if (incomingKeys.has(key)) return;
+      incomingKeys.add(key);
+      uniqueIncomingRows.push(row);
+    });
+    const dates = new Set(uniqueIncomingRows.map((row) => adsDateKey(row.date)).filter(Boolean));
+    if (!dates.size) {
+      sendJson(response, 400, { error: 'Nenhuma data válida foi encontrada no arquivo de ADS.' });
+      return;
+    }
+    const datesOutsideSelectedMonth = Array.from(dates).filter((date) => Number(date.slice(5, 7)) !== Number(month));
+    if (datesOutsideSelectedMonth.length) {
+      sendJson(response, 400, { error: 'O arquivo possui datas fora do mês selecionado. Escolha o mês correto antes de publicar.' });
+      return;
+    }
+    const keptRows = [];
+    let replaced = 0;
+    savedRows.slice(1).forEach((row) => {
+      const samePlatform = normalizeAdsText(row[indexes.marketplace]) === platformKey;
+      const sameAccount = normalizeAdsText(row[indexes.sale]) === normalizeAdsText(account);
+      const actual = normalizeAdsText(row[indexes.datatype]) !== 'forecast';
+      if (samePlatform && sameAccount && actual && isAdsMetricRow(row, indexes)) replaced += 1;
+      else keptRows.push(row);
+    });
+
+    const now = new Date().toISOString();
+    const addedRows = uniqueIncomingRows.map((source) => {
+      const row = new Array(header.length).fill('');
+      const date = adsDateKey(source.date);
+      const sku = String(source.sku || '').trim();
+      const known = skuData.get(normalizeAdsText(sku)) || {};
+      row[indexes.marketplace] = platform;
+      if (indexes.sale >= 0) row[indexes.sale] = account;
+      row[indexes.sku] = sku;
+      if (indexes.ad >= 0) row[indexes.ad] = String(source.ad || '').trim();
+      row[indexes.date] = date;
+      row[indexes.category] = String(source.category || '').trim();
+      row[indexes.subcategory] = String(source.subcategory || '').trim();
+      row[indexes.value] = Number(source.value) || 0;
+      if (indexes.tag >= 0) row[indexes.tag] = '';
+      if (indexes.description >= 0) row[indexes.description] = known.description || '';
+      if (indexes.category2 >= 0) row[indexes.category2] = known.category2 || '';
+      row[indexes.datatype] = 'Actual';
+      if (indexes.recordDate >= 0) row[indexes.recordDate] = now;
+      if (indexes.fullDate >= 0) row[indexes.fullDate] = date;
+      return row;
+    });
+
+    saved.rows = [header].concat(keptRows, addedRows);
+    writeJsonWithRetry(rowsPath, saved);
+    monthMetadata.rowsUpdatedAt = now;
+    writeJsonWithRetry(metadataPath, metadata);
+    sendJson(response, 200, { added: addedRows.length, replaced, duplicatesRemoved: incomingRows.length - uniqueIncomingRows.length, platform, account, month });
+    setImmediate(() => ensureIntelligentAnalysis(true).catch(() => {}));
+  } catch (error) {
+    console.error('Erro ao publicar base de ADS:', error);
+    const status = error.message === 'PAYLOAD_TOO_LARGE' ? 413 : 500;
+    sendJson(response, status, { error: status === 413 ? 'Arquivo de ADS acima do limite permitido.' : (error.message || 'Erro ao publicar base de ADS.') });
   }
 }
 
@@ -677,6 +1333,48 @@ function readProductMaster() {
     };
   } catch (error) {
     return { version: 1, categories: [], skus: {}, updatedAt: null };
+  }
+}
+
+function applyProductCategoriesToRowsFile(filePath) {
+  const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!rows.length) return;
+  const headers = rows[0].map((header) => String(header || '').trim());
+  const normalizedHeaders = headers.map(normalizeMasterText);
+  const skuIndex = normalizedHeaders.indexOf('sku');
+  if (skuIndex < 0) return;
+  let categoryIndex = normalizedHeaders.findIndex((header) => ['categoria2', 'categoria 2'].includes(header));
+  if (categoryIndex < 0) {
+    categoryIndex = headers.length;
+    headers.push('Categoria2');
+    rows[0] = headers;
+  }
+  const descriptionIndex = normalizedHeaders.findIndex((header) => ['descricao', 'titulo do anuncio'].includes(header));
+  const marketplaceIndex = normalizedHeaders.indexOf('marketplace');
+  const master = readProductMaster();
+  const categoryNames = Object.fromEntries((master.categories || []).map((category) => [category.id, category.name]));
+  let masterChanged = false;
+  rows.slice(1).forEach((row) => {
+    const sku = String(row[skuIndex] || '').trim();
+    if (!sku) return;
+    const existing = master.skus[sku] || {};
+    if (!existing.sku) masterChanged = true;
+    master.skus[sku] = {
+      sku,
+      description: existing.description || String(row[descriptionIndex] || '').trim(),
+      marketplace: existing.marketplace || String(row[marketplaceIndex] || '').trim(),
+      categoryId: existing.categoryId || '',
+      firstSeen: existing.firstSeen || new Date().toISOString(),
+      lastSeen: new Date().toISOString()
+    };
+    row[categoryIndex] = categoryNames[master.skus[sku].categoryId] || '';
+  });
+  payload.rows = rows;
+  fs.writeFileSync(filePath, JSON.stringify(payload));
+  if (masterChanged) {
+    master.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(productMasterPath, master);
   }
 }
 
@@ -745,6 +1443,18 @@ async function handleProductMasterUpdate(request, response) {
         return sendJson(response, 400, { error: 'Categoria invalida.' });
       }
       master.skus[sku].categoryId = categoryId;
+    } else if (payload.action === 'assign-skus') {
+      const skus = Array.isArray(payload.skus)
+        ? [...new Set(payload.skus.map((sku) => String(sku || '').trim()).filter(Boolean))]
+        : [];
+      const categoryId = String(payload.categoryId || '').trim();
+      if (!skus.length) return sendJson(response, 400, { error: 'Nenhum SKU foi selecionado.' });
+      if (!categoryId || !master.categories.some((item) => item.id === categoryId)) {
+        return sendJson(response, 400, { error: 'Selecione uma categoria valida.' });
+      }
+      skus.forEach((sku) => {
+        if (master.skus[sku]) master.skus[sku].categoryId = categoryId;
+      });
     } else {
       return sendJson(response, 400, { error: 'Acao invalida.' });
     }
@@ -753,6 +1463,49 @@ async function handleProductMasterUpdate(request, response) {
     sendJson(response, 200, master);
   } catch (error) {
     sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });
+  }
+}
+
+function handleApplyProductCategories(request, response) {
+  try {
+    const metadata = readMetadata();
+    const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+    const master = readProductMaster();
+    const categoryNames = Object.fromEntries((master.categories || []).map((category) => [category.id, category.name]));
+    const categorizedSkus = new Set(Object.values(master.skus || {})
+      .filter((item) => item.categoryId && categoryNames[item.categoryId])
+      .map((item) => String(item.sku || '').trim()));
+    let files = 0;
+    let rows = 0;
+    let updatedRows = 0;
+    const updatedAt = new Date().toISOString();
+
+    Object.values(months).forEach((month) => {
+      if (!month || !month.rowsName) return;
+      const rowsPath = resolveDataFilePath(month.rowsName);
+      if (!fs.existsSync(rowsPath)) return;
+      applyProductCategoriesToRowsFile(rowsPath);
+      const payload = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+      const savedRows = Array.isArray(payload.rows) ? payload.rows : [];
+      const headers = savedRows[0] || [];
+      const skuIndex = headers.findIndex((header) => normalizeMasterText(header) === 'sku');
+      const categoryIndex = headers.findIndex((header) => ['categoria2', 'categoria 2'].includes(normalizeMasterText(header)));
+      savedRows.slice(1).forEach((row) => {
+        rows += 1;
+        if (skuIndex >= 0 && categoryIndex >= 0 && categorizedSkus.has(String(row[skuIndex] || '').trim()) && String(row[categoryIndex] || '').trim()) {
+          updatedRows += 1;
+        }
+      });
+      month.rowsUpdatedAt = updatedAt;
+      files += 1;
+    });
+
+    writeJsonWithRetry(metadataPath, metadata);
+    sendJson(response, 200, { files, rows, updatedRows, categorizedSkus: categorizedSkus.size, updatedAt });
+    setImmediate(() => ensureIntelligentAnalysis(true).catch(() => {}));
+  } catch (error) {
+    console.error('Erro ao aplicar categorias na base:', error);
+    sendJson(response, 500, { error: error.message || 'Nao foi possivel atualizar as categorias da base.' });
   }
 }
 
@@ -770,6 +1523,170 @@ function readInventory() {
     };
   } catch (error) {
     return { version: 1, entries: [], links: {}, updatedAt: null };
+  }
+}
+
+function readInventoryFull() {
+  if (!fs.existsSync(inventoryFullPath)) {
+    return { version: 2, companies: {}, updatedAt: null };
+  }
+  try {
+    const value = JSON.parse(fs.readFileSync(inventoryFullPath, 'utf8'));
+    if (value.companies && typeof value.companies === 'object') {
+      const companies = {};
+      Object.entries(value.companies).forEach(([account, dataset]) => {
+        if (!dataset || typeof dataset !== 'object') return;
+        companies[account] = {
+          account, rows: Array.isArray(dataset.rows) ? dataset.rows : [],
+          sourceFile: String(dataset.sourceFile || ''), sourceUpdatedAt: String(dataset.sourceUpdatedAt || ''),
+          importedAt: dataset.importedAt || null,
+          capacity: dataset.capacity && typeof dataset.capacity === 'object' ? dataset.capacity : {}
+        };
+      });
+      return { version: 2, companies, updatedAt: value.updatedAt || null };
+    }
+    const legacyAccount = String(value.account || 'Conta não identificada').trim();
+    return {
+      version: 2,
+      companies: Array.isArray(value.rows) && value.rows.length ? { [legacyAccount]: {
+        account: legacyAccount, rows: value.rows, sourceFile: String(value.sourceFile || ''),
+        sourceUpdatedAt: String(value.sourceUpdatedAt || ''), importedAt: value.importedAt || null,
+        capacity: value.capacity && typeof value.capacity === 'object' ? value.capacity : {}
+      } } : {},
+      updatedAt: value.importedAt || null
+    };
+  } catch (error) {
+    return { version: 2, companies: {}, updatedAt: null };
+  }
+}
+
+async function handleInventoryFullUpdate(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, 25 * 1024 * 1024);
+    if (payload.action !== 'replace' || !Array.isArray(payload.rows)) {
+      return sendJson(response, 400, { error: 'Arquivo de Estoque Full invalido.' });
+    }
+    const account = String(payload.account || '').trim();
+    if (!account) return sendJson(response, 400, { error: 'Selecione a empresa do Mercado Livre.' });
+    const registered = getRegisteredMarketplaceAccounts().some((item) =>
+      normalizeAdsText(item.marketplace) === 'mercado livre' && normalizeAdsText(item.account) === normalizeAdsText(account));
+    if (!registered) return sendJson(response, 400, { error: 'A empresa selecionada não está cadastrada no Mercado Livre da plataforma.' });
+    const inventoryFull = readInventoryFull();
+    inventoryFull.companies[account] = {
+      account,
+      rows: payload.rows.slice(0, 100000),
+      sourceFile: String(payload.sourceFile || '').slice(0, 260),
+      sourceUpdatedAt: String(payload.sourceUpdatedAt || '').slice(0, 200),
+      importedAt: new Date().toISOString(),
+      capacity: payload.capacity && typeof payload.capacity === 'object' ? payload.capacity : {}
+    };
+    inventoryFull.version = 2;
+    inventoryFull.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(inventoryFullPath, inventoryFull);
+    sendJson(response, 200, inventoryFull);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });
+  }
+}
+
+function readSalesTreaters() {
+  if (!fs.existsSync(salesTreatersPath)) return { version: 1, channels: [], updatedAt: null };
+  try {
+    const value = JSON.parse(fs.readFileSync(salesTreatersPath, 'utf8'));
+    return { version: 1, channels: Array.isArray(value.channels) ? value.channels : [], updatedAt: value.updatedAt || null };
+  } catch (error) {
+    return { version: 1, channels: [], updatedAt: null };
+  }
+}
+
+async function handleSalesTreatersUpdate(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, 1024 * 1024);
+    const state = readSalesTreaters();
+    if (payload.action === 'upsert-channel') {
+      const marketplace = String(payload.marketplace || '').trim();
+      const channelName = String(payload.channelName || '').trim();
+      const taxRate = Number(payload.taxRate);
+      const marketplaceKey = normalizeAdsText(marketplace);
+      if (!['mercado livre', 'shopee', 'tiktok', 'amazon', 'magalu'].includes(marketplaceKey)) return sendJson(response, 400, { error: 'Marketplace ainda não disponível no Tratador de Vendas.' });
+      if (!channelName) return sendJson(response, 400, { error: 'Informe o nome do canal/conta.' });
+      if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) return sendJson(response, 400, { error: 'Informe uma alíquota de imposto válida.' });
+      const anticipationRate = marketplaceKey === 'shopee' ? Number(payload.anticipationRate) : 0;
+      const freight = marketplaceKey === 'shopee' ? Number(payload.freight) : 0;
+      if (!Number.isFinite(anticipationRate) || anticipationRate < 0 || anticipationRate > 100) return sendJson(response, 400, { error: 'Informe uma antecipação válida.' });
+      if (!Number.isFinite(freight)) return sendJson(response, 400, { error: 'Informe um frete válido.' });
+      const id = String(payload.id || '').trim();
+      const current = state.channels.find((item) => item.id === id);
+      const duplicate = state.channels.find((item) => item.id !== id && normalizeAdsText(item.marketplace) === normalizeAdsText(marketplace) && normalizeAdsText(item.channelName) === normalizeAdsText(channelName));
+      if (duplicate) return sendJson(response, 400, { error: 'Este canal já está cadastrado.' });
+      const item = { id: current && current.id || crypto.randomUUID(), marketplace, channelName, taxRate, anticipationRate, freight, active: payload.active !== false, updatedAt: new Date().toISOString() };
+      if (current) Object.assign(current, item); else state.channels.push(item);
+    } else if (payload.action === 'delete-channel') {
+      const index = state.channels.findIndex((item) => item.id === String(payload.id || ''));
+      if (index < 0) return sendJson(response, 404, { error: 'Canal não encontrado.' });
+      state.channels.splice(index, 1);
+    } else {
+      return sendJson(response, 400, { error: 'Ação inválida para o tratador de vendas.' });
+    }
+    state.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(salesTreatersPath, state);
+    sendJson(response, 200, state);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON inválido.' : error.message });
+  }
+}
+
+function readMagaluIds() {
+  const filePath = path.join(__dirname, 'lib', 'magalu-ids.csv');
+  if (!fs.existsSync(filePath)) return {};
+  const lines = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
+  const result = {};
+  lines.slice(1).forEach((line) => {
+    const separator = line.indexOf(',');
+    if (separator < 0) return;
+    const id = line.slice(0, separator).trim(), sku = line.slice(separator + 1).trim();
+    if (id && sku && !result[id]) result[id] = sku;
+  });
+  return result;
+}
+
+async function handleMarketplaceSalesTransform(request, response, marketplaceKey) {
+  try {
+    const payload = await collectJsonRequest(request, 80 * 1024 * 1024);
+    const state = readSalesTreaters();
+    const channel = state.channels.find((item) => item.id === String(payload.channelId || ''));
+    if (!channel) return sendJson(response, 404, { error: 'Canal não encontrado.' });
+    if (normalizeAdsText(channel.marketplace) !== marketplaceKey) return sendJson(response, 400, { error: 'O canal selecionado não pertence a este marketplace.' });
+    const input = Object.assign({}, payload, { channelName: channel.channelName, taxRate: channel.taxRate });
+    let result;
+    if (marketplaceKey === 'tiktok') result = transformTikTok(input, readPricingDatabase());
+    else if (marketplaceKey === 'amazon') result = transformAmazon(input, readPricingDatabase());
+    else if (marketplaceKey === 'magalu') result = transformMagalu(input, readPricingDatabase(), readMagaluIds());
+    else return sendJson(response, 400, { error: 'Marketplace inválido.' });
+    sendJson(response, 200, result);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'Arquivo do marketplace inválido.' : error.message });
+  }
+}
+
+async function handleShopeeSalesTransform(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, 50 * 1024 * 1024);
+    const state = readSalesTreaters();
+    const channel = state.channels.find((item) => item.id === String(payload.channelId || ''));
+    if (!channel) return sendJson(response, 404, { error: 'Canal não encontrado.' });
+    if (normalizeAdsText(channel.marketplace) !== 'shopee') return sendJson(response, 400, { error: 'Este canal não é da Shopee.' });
+    const result = transformShopee({
+      headers: payload.headers,
+      rows: payload.rows,
+      channelName: channel.channelName,
+      taxRate: channel.taxRate,
+      anticipationRate: channel.anticipationRate,
+      freight: channel.freight
+    }, readPricingDatabase());
+    sendJson(response, 200, result);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'Arquivo da Shopee inválido.' : error.message });
   }
 }
 
@@ -1250,6 +2167,19 @@ function aggregatePublishedScenario(rows, month, year, scenarioKind, options) {
   const availableDays = new Set();
   let latestDay = 0;
   const cutoffDay = Number(options && options.cutoffDay) || 0;
+  const limitDistinctDates = Number(options && options.limitDistinctDates) || 0;
+  let allowedForecastDates = null;
+
+  if (scenarioKind === 'forecast' && limitDistinctDates && indexes.date >= 0) {
+    const dates = new Set();
+    rows.slice(1).forEach((row) => {
+      if (indexes.scenario >= 0 && !isForecastAnalysisValue(row[indexes.scenario])) return;
+      const parts = parseAnalysisDateParts(row[indexes.date], Number(month), year);
+      if (!parts) return;
+      dates.add(String(parts.year).padStart(4, '0') + '-' + String(parts.month).padStart(2, '0') + '-' + String(parts.day).padStart(2, '0'));
+    });
+    allowedForecastDates = new Set(Array.from(dates).sort().slice(0, limitDistinctDates));
+  }
 
   rows.slice(1).forEach((row) => {
     const scenario = indexes.scenario >= 0 ? row[indexes.scenario] : 'actual';
@@ -1262,6 +2192,10 @@ function aggregatePublishedScenario(rows, month, year, scenarioKind, options) {
     const dateParts = indexes.date >= 0
       ? parseAnalysisDateParts(row[indexes.date], Number(month), year)
       : null;
+    if (allowedForecastDates && dateParts) {
+      const dateKey = String(dateParts.year).padStart(4, '0') + '-' + String(dateParts.month).padStart(2, '0') + '-' + String(dateParts.day).padStart(2, '0');
+      if (!allowedForecastDates.has(dateKey)) return;
+    }
     if (dateParts && dateParts.month === Number(month)) {
       if (cutoffDay && dateParts.day > cutoffDay) {
         return;
@@ -1633,22 +2567,23 @@ function buildIntelligentAnalytics() {
 
   const currentFull = months[months.length - 1];
   const currentSource = monthSources[monthSources.length - 1];
-  const today = getSaoPauloDateParts();
-  const mtdDay = currentFull.month === today.month && currentFull.year === today.year
-    ? Math.max(today.day - 1, 1)
-    : currentFull.coverage && currentFull.coverage.calendarDays;
-  const actualDataDay = Math.max(1, Math.min(
-    currentFull.coverage && currentFull.coverage.latestDay || mtdDay || 1,
-    mtdDay || 1
-  ));
   const calendarDays = currentFull.coverage && currentFull.coverage.calendarDays
     || new Date(currentFull.year, currentFull.month, 0).getDate();
+  const actualDataDay = Math.max(1, Math.min(
+    currentFull.coverage && currentFull.coverage.daysWithData || 1,
+    calendarDays
+  ));
+  const latestActualDay = Math.max(1, Math.min(
+    currentFull.coverage && currentFull.coverage.latestDay || actualDataDay,
+    calendarDays
+  ));
+  const mtdDay = actualDataDay;
   const currentMtd = aggregatePublishedScenario(
     currentSource.rows,
     currentSource.month,
     currentSource.year,
     'actual',
-    { cutoffDay: mtdDay }
+    { cutoffDay: latestActualDay }
   );
   const current = Object.assign({}, currentFull, {
     totals: currentMtd ? currentMtd.totals : currentFull.totals,
@@ -1671,7 +2606,14 @@ function buildIntelligentAnalytics() {
     : null;
   const average3 = calculateAverageMetrics(priorComparableMonths.slice(-3));
   const average6 = calculateAverageMetrics(priorComparableMonths.slice(-6));
-  const forecastToDate = scaleMetricTotals(current.forecastTotals, mtdDay / calendarDays);
+  const forecastMtd = aggregatePublishedScenario(
+    currentSource.rows,
+    currentSource.month,
+    currentSource.year,
+    'forecast',
+    { limitDistinctDates: actualDataDay }
+  );
+  const forecastToDate = forecastMtd ? forecastMtd.totals : null;
   const projectedTotals = scaleMetricTotals(current.totals, calendarDays / actualDataDay);
   const reportDateLabel = String(actualDataDay).padStart(2, '0') + '/'
     + String(current.month).padStart(2, '0') + '/' + current.year;
@@ -1696,7 +2638,7 @@ function buildIntelligentAnalytics() {
     previousMonth: previous ? previous.label : '',
     periodContext: {
       status: 'MTD Forecast',
-      reportRule: 'D-1',
+      reportRule: 'Dias Actual carregados',
       reportDay: mtdDay,
       mtdDay,
       mtdDate: mtdDateLabel,
@@ -2533,7 +3475,7 @@ async function handleCopilotChat(request, response) {
           'Você é o Copiloto FP&A da empresa, um assistente especializado em controladoria, finanças, e-commerce, marketplaces, publicidade, precificação e crescimento.',
           'Responda sempre em português do Brasil, com linguagem profissional, clara, direta e fácil de compreender.',
           'Use exclusivamente os dados Actual/realizados fornecidos no contexto. O campo businessData.completeBase contém apenas a base Actual agregada disponível; consulte esse campo antes de concluir que não há informação. Nunca invente números, causas, metas, estoque, conversão ou informações indisponíveis.',
-          'Considere que o mês atual é parcial e segue a regra D-1. Não trate o mês como encerrado.',
+          'Considere que o mês atual é parcial e que o MTD Forecast soma os mesmos dias alimentados no Actual. Não trate o mês como encerrado.',
           'Todas as análises do Copiloto devem usar exclusivamente dados Actual/realizados. Não use Forecast, metas, orçamento, projeção ou MTD Forecast estimado para responder análises, exceto se o usuário pedir explicitamente Forecast.',
           'O contexto actualDailyIndex contém todos os dias carregados em Actual. Use esse índice para saber quais datas existem, analisar tendências diárias e evitar dizer que não há dados quando a data está listada ali.',
           'Quando a pergunta for sobre queda, crescimento ou eficiência, apresente números e comparações que sustentem a conclusão.',
@@ -2689,15 +3631,15 @@ async function generateIntelligentAnalysis(force) {
         'Responda sempre em portugues do Brasil, com linguagem simples, executiva e objetiva.',
         'Use exclusivamente os numeros fornecidos. Nunca invente dados, causas, metas, conversao ou indicadores indisponiveis.',
         'Quando um KPI estiver indisponivel ou for apenas uma aproximacao, declare isso claramente.',
-        'O mes atual e parcial e segue a regra D-1. Nunca escreva como se o mes ja tivesse terminado.',
-        'O MTD Forecast e sempre o Forecast mensal dividido pelos dias do mes e multiplicado pelo D-1 do calendario, mesmo quando a ultima data realizada carregada for anterior.',
-        'Diferencie claramente mtdDay, que calcula a meta proporcional, de actualDataDay, que informa ate quando existem dados realizados.',
+        'O mes atual e parcial. O MTD Forecast soma diretamente a mesma quantidade de dias distintos alimentados no Actual. Nunca escreva como se o mes ja tivesse terminado.',
+        'O MTD Forecast e a soma direta dos primeiros dias do Forecast diario, usando a mesma quantidade de datas distintas com Actual carregado.',
+        'Nao rateie novamente o Forecast diario e nao inclua dias sem Actual no MTD.',
         'Use periodContext para informar claramente a data de corte, os dias transcorridos e quantos dias faltam.',
-        'Se dataLagDays for maior que zero, avise que a base esta atrasada em relacao ao D-1 esperado e nao atribua resultado aos dias ausentes.',
+        'Se dataLagDays for maior que zero, avise que existem dias ainda nao alimentados e nao atribua resultado aos dias ausentes.',
         'Para meses anteriores a 01/06/2026, o comparativo foi estimado por: total do mes anterior dividido pelos dias daquele mes, multiplicado pelos dias fechados do mes atual.',
         'A partir de 01/06/2026, compare o realizado com o MTD Forecast usando os dados diarios reais do mesmo numero de dias.',
         'Explique quando o comparativo for estimado e nao apresente a estimativa como dado realizado.',
-        'Nao compare o realizado parcial diretamente com meses completos. Separe realizado ate D-1, ritmo atual e projecao de fechamento.',
+        'Nao compare o realizado parcial diretamente com meses completos. Separe realizado nos dias alimentados, ritmo atual e projecao de fechamento.',
         'A projecao de fechamento e uma estimativa linear baseada no ritmo medio diario; identifique-a como projecao, nunca como resultado realizado.',
         'Compare tambem o realizado com o Forecast da base, que representa as metas e o orcamento do periodo.',
         'Explique se o crescimento gera lucro ou apenas faturamento, se a margem melhora ou piora, se publicidade gera retorno e onde o negocio perde dinheiro.',
@@ -2894,6 +3836,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && requestPath === '/api/admin/validate') {
+    if (!requireAdmin(request, response)) return;
+    sendJson(response, 200, { valid: true });
+    return;
+  }
+
   if (request.method === 'POST' && requestPath === '/api/upload-base') {
     handleBaseUpload(request, response);
     return;
@@ -2901,6 +3849,26 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestPath === '/api/upload-rows') {
     handleRowsUpload(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/forecast') {
+    sendJson(response, 200, getForecastStatus());
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/forecast') {
+    handleForecastPublish(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ads-base') {
+    handleAdsBaseUpload(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/marketplace-accounts') {
+    sendJson(response, 200, { accounts: getRegisteredMarketplaceAccounts() });
     return;
   }
 
@@ -2924,6 +3892,11 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && requestPath === '/api/product-master/apply') {
+    handleApplyProductCategories(request, response);
+    return;
+  }
+
   if (request.method === 'GET' && requestPath === '/api/inventory') {
     sendJson(response, 200, readInventory());
     return;
@@ -2931,6 +3904,46 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestPath === '/api/inventory') {
     handleInventoryUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/inventory-full') {
+    sendJson(response, 200, readInventoryFull());
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/sales-treaters') {
+    sendJson(response, 200, readSalesTreaters());
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters') {
+    handleSalesTreatersUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/shopee-transform') {
+    handleShopeeSalesTransform(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/tiktok-transform') {
+    handleMarketplaceSalesTransform(request, response, 'tiktok');
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/amazon-transform') {
+    handleMarketplaceSalesTransform(request, response, 'amazon');
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/magalu-transform') {
+    handleMarketplaceSalesTransform(request, response, 'magalu');
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/inventory-full') {
+    handleInventoryFullUpdate(request, response);
     return;
   }
 
@@ -2954,6 +3967,31 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && requestPath === '/api/budgets') {
+    sendJson(response, 200, readBudgets());
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/budgets') {
+    handleBudgetsUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/accounts') {
+    sendJson(response, 200, readAccounts());
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/accounts') {
+    handleAccountsUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/financial-options') {
+    sendJson(response, 200, { options: readFinancialOptions() });
+    return;
+  }
+
   const filePath = resolvePublicFile(request.url);
 
   if (!filePath) {
@@ -2962,7 +4000,8 @@ const server = http.createServer((request, response) => {
   }
 
   const extension = path.extname(filePath).toLowerCase();
-  const cacheControl = filePath === path.join(projectDir, 'index.html')
+  const isPublishedDataFile = !path.relative(dataDir, filePath).startsWith('..') && !path.isAbsolute(path.relative(dataDir, filePath));
+  const cacheControl = filePath === path.join(projectDir, 'index.html') || isPublishedDataFile
     ? 'no-store'
     : 'public, max-age=31536000, immutable';
   sendFile(response, filePath, mimeTypes[extension] || 'application/octet-stream', cacheControl);

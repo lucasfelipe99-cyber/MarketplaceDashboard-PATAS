@@ -270,6 +270,56 @@
   color: #aebbd0;
 }
 
+.budget-editor-table {
+  min-width: 1680px;
+}
+
+.budget-editor-table th:not(:first-child),
+.budget-editor-table td:not(:first-child) {
+  min-width: 108px;
+  text-align: center;
+}
+
+.budget-editor-table td:first-child {
+  min-width: 280px;
+}
+
+.budget-editor-classification {
+  background: rgba(71, 126, 255, .1);
+  font-weight: 800;
+}
+
+.budget-editor-category td:first-child {
+  padding-left: 34px;
+  color: #b9c6d8;
+}
+
+.budget-value-input {
+  width: 100%;
+  min-width: 92px;
+  border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 7px;
+  background: rgba(7, 14, 27, .45);
+  color: #eaf1ff;
+  padding: 8px 7px;
+  text-align: right;
+}
+
+.budget-value-input:focus {
+  border-color: #4f86ff;
+  outline: 2px solid rgba(79, 134, 255, .16);
+}
+
+.budget-mini-action {
+  float: right;
+  border: 0;
+  background: transparent;
+  color: #78a2ff;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .closing-compare {
   display: block;
   margin-top: 4px;
@@ -384,3 +434,4 @@ html[data-theme="light"] .closing-table thead th:first-child {
 @media (max-width: 620px) {
   .closing-kpis { grid-template-columns: 1fr; }
 }
+.mapping-modal-backdrop{position:fixed;inset:0;z-index:10050;display:grid;place-items:center;padding:20px;background:rgba(2,6,23,.76);backdrop-filter:blur(5px)}.mapping-modal{width:min(560px,100%);border:1px solid rgba(96,165,250,.3);border-radius:16px;background:#101827;box-shadow:0 24px 80px rgba(0,0,0,.55);padding:22px}.mapping-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.mapping-modal-head span{color:#60a5fa;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.mapping-modal-head h3{margin:5px 0 0;font-size:22px}.mapping-modal-head button{border:1px solid #2b3b56;border-radius:8px;background:#172238;color:#dbeafe;font-size:22px;line-height:1;padding:5px 9px;cursor:pointer}.mapping-modal>p{color:#8da0bb;margin:12px 0 18px}.mapping-modal form{display:grid;gap:14px}.mapping-modal form label{display:grid;gap:7px;color:#9db0ca;font-size:11px;font-weight:900;text-transform:uppercase}.mapping-modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:600px){.mapping-modal{padding:18px}.mapping-modal-actions{flex-direction:column-reverse}.mapping-modal-actions button{width:100%}}
