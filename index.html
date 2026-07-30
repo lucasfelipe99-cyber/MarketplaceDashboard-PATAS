@@ -4789,7 +4789,7 @@
     </section>
 
     <section class="tab-panel" id="forecastPanel" style="padding:0;overflow:hidden">
-      <iframe id="forecastFrame" title="Forecast de Vendas" src="/assets/forecast.html?v=6" style="width:100%;height:calc(100vh - 92px);border:0;border-radius:14px;background:#07131d"></iframe>
+      <iframe id="forecastFrame" title="Forecast de Vendas" src="/assets/forecast.html?v=7" style="width:100%;height:calc(100vh - 92px);border:0;border-radius:14px;background:#07131d"></iframe>
     </section>
 
     <section class="tab-panel" id="skuCatalogPanel">
@@ -5058,6 +5058,11 @@
     let goalsTypeFilter = '';
     let goalsEditMode = false;
     const GOALS_STORAGE_KEY = 'marketplace-dashboard-manual-goals-v1';
+    let goalsPersistentStore = (() => {
+      try { return JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY) || '{}') || {}; }
+      catch (error) { return {}; }
+    })();
+    let goalsPersistentLoaded = false;
 
     const COPILOT_SUGGESTIONS = [
       'Por que minha GM caiu neste mês?',
@@ -10022,11 +10027,25 @@
     }
 
     function getStoredGoals() {
+      return goalsPersistentStore;
+    }
+
+    function persistGoals() {
+      try { localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(goalsPersistentStore)); } catch (error) {}
+      fetch('/api/ui-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set', key: 'manual-goals', value: goalsPersistentStore }) }).catch(function (error) { console.warn('Falha ao salvar metas:', error.message); });
+    }
+
+    async function loadPersistentGoals() {
+      if (goalsPersistentLoaded) return;
+      goalsPersistentLoaded = true;
       try {
-        return JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY) || '{}') || {};
-      } catch (error) {
-        return {};
-      }
+        const response = await fetch('/api/ui-state?key=manual-goals', { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (payload.value) goalsPersistentStore = payload.value;
+        else if (Object.keys(goalsPersistentStore).length) persistGoals();
+        if (goalsDashboardContainer) renderGoalsDashboard();
+      } catch (error) { goalsPersistentLoaded = false; console.warn('Falha ao carregar metas:', error.message); }
     }
 
     function getGoalScope() {
@@ -10052,7 +10071,8 @@
           stored[input.dataset.goalId] = value;
         }
       });
-      localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(stored));
+      goalsPersistentStore = stored;
+      persistGoals();
       goalsEditMode = false;
       renderGoalsDashboard();
     }
@@ -10065,7 +10085,8 @@
           delete stored[key];
         }
       });
-      localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(stored));
+      goalsPersistentStore = stored;
+      persistGoals();
       goalsEditMode = false;
       renderGoalsDashboard();
     }
@@ -13962,6 +13983,7 @@
       });
 
       renderActivePanel();
+      loadPersistentGoals();
     }
 
     function renderActivePanel(force) {
@@ -14060,14 +14082,14 @@
   <script src="/assets/tratador-vendas.js?v=19-20260730"></script>
   <link rel="stylesheet" href="/assets/product-master.css?v=2">
   <script src="/assets/product-master.js?v=5"></script>
-  <script src="/assets/fechamento.js?v=31"></script>
+  <script src="/assets/fechamento.js?v=32"></script>
   <script src="/assets/ads-upload.js?v=4"></script>
   <link rel="stylesheet" href="/assets/contas.css?v=5">
   <script src="/assets/contas.js?v=6"></script>
   <link rel="stylesheet" href="/assets/estoque.css?v=1">
   <script src="/assets/estoque.js?v=2"></script>
   <link rel="stylesheet" href="/assets/estoque-full.css?v=4">
-  <script src="/assets/estoque-full.js?v=12"></script>
+  <script src="/assets/estoque-full.js?v=13"></script>
   <link rel="stylesheet" href="/assets/calculadora-preco.css?v=7">
   <script src="/assets/calculadora-preco.js?v=11"></script>
 </body>

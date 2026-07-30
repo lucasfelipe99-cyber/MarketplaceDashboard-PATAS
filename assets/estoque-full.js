@@ -25,6 +25,14 @@
     ['pending', 'Entrada pendente', 'actionPending', 'pending']
   ];
 
+  function savePlanner() {
+    try { localStorage.setItem('marketplace-full-planner-v1', JSON.stringify(planner)); } catch (error) {}
+    fetch('/api/ui-state', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set', key: 'full-planner', value: planner })
+    }).catch(function (error) { console.warn('Falha ao salvar o planejamento:', error.message); });
+  }
+
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character];
@@ -317,7 +325,7 @@
       var field = document.getElementById(pair[0]);
       if (field) field.addEventListener('change', function () {
         planner[pair[1]] = Number(this.value);
-        localStorage.setItem('marketplace-full-planner-v1', JSON.stringify(planner));
+        savePlanner();
         pages.planner = 1;
         render();
       });
@@ -326,10 +334,17 @@
 
   async function load() {
     try {
-      var responses = await Promise.all([fetch('/api/inventory-full', { cache: 'no-store' }), fetch('/api/marketplace-accounts', { cache: 'no-store' })]);
+      var responses = await Promise.all([fetch('/api/inventory-full', { cache: 'no-store' }), fetch('/api/marketplace-accounts', { cache: 'no-store' }), fetch('/api/ui-state?key=full-planner', { cache: 'no-store' })]);
       if (!responses[0].ok || !responses[1].ok) throw new Error('Não foi possível carregar o Estoque Full.');
       inventoryStore = await responses[0].json();
       var accountsPayload = await responses[1].json();
+      if (responses[2].ok) {
+        var plannerPayload = await responses[2].json();
+        if (plannerPayload.value) {
+          planner.depthDays = [7, 15, 20, 30].indexOf(Number(plannerPayload.value.depthDays)) >= 0 ? Number(plannerPayload.value.depthDays) : planner.depthDays;
+          planner.shipments = Math.min(10, Math.max(4, Number(plannerPayload.value.shipments) || planner.shipments));
+        } else savePlanner();
+      }
       marketplaceAccounts = (accountsPayload.accounts || []).filter(function (item) { return normalize(item.marketplace) === 'mercado livre'; }).map(function (item) { return String(item.account || '').trim(); }).filter(Boolean);
       var names = companyNames();
       if (!selectedCompany || names.indexOf(selectedCompany) < 0) selectedCompany = names[0] || '';

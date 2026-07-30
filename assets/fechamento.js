@@ -51,6 +51,23 @@
   var cashFlowStorageKey = 'marketplace-financial-closing';
   var cashFlowStorageVersionKey = 'marketplace-financial-closing-version';
   var cashFlowStorageVersion = 'empty-bundled-cashflow-v1';
+  var closingComments = {};
+
+  async function loadPersistentUiState(key) {
+    var response = await fetch('/api/ui-state?key=' + encodeURIComponent(key), { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    return response.json();
+  }
+
+  async function savePersistentUiState(key, value) {
+    var response = await fetch('/api/ui-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set', key: key, value: value })
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    return response.json();
+  }
 
   async function refreshSalesRevenueFromDashboardUploads() {
     if (typeof loadPublishedMetadata !== 'function' || typeof loadSalesHistoryRowsByMonth !== 'function') return;
@@ -133,7 +150,8 @@
     }
   }
 
-  function loadClosingState() {
+  async function loadClosingState() {
+    var localSaved = {};
     try {
       if (localStorage.getItem(cashFlowStorageVersionKey) !== cashFlowStorageVersion) {
         var legacy = JSON.parse(localStorage.getItem(cashFlowStorageKey) || '{}');
@@ -143,14 +161,28 @@
         localStorage.setItem(cashFlowStorageKey, JSON.stringify(legacy));
         localStorage.setItem(cashFlowStorageVersionKey, cashFlowStorageVersion);
       }
-      var saved = JSON.parse(localStorage.getItem(cashFlowStorageKey) || '{}');
+      localSaved = JSON.parse(localStorage.getItem(cashFlowStorageKey) || '{}');
+      var responses = await Promise.all([loadPersistentUiState('financial-closing'), loadPersistentUiState('closing-comments')]);
+      var saved = responses[0].value || localSaved;
+      closingComments = responses[1].value || {};
+      if (!responses[0].value && Array.isArray(localSaved.records) && localSaved.records.length) await savePersistentUiState('financial-closing', localSaved);
+      if (!responses[1].value) {
+        for (var index = 0; index < localStorage.length; index += 1) {
+          var localKey = localStorage.key(index);
+          if (localKey && localKey.indexOf('closing-comment-') === 0) closingComments[localKey.slice(16)] = localStorage.getItem(localKey);
+        }
+        if (Object.keys(closingComments).length) await savePersistentUiState('closing-comments', closingComments);
+      }
       if (Array.isArray(saved.records)) cashFlowState.records = saved.records;
       if (saved.fileName) cashFlowState.fileName = saved.fileName;
       if (saved.importedAt) cashFlowState.importedAt = saved.importedAt;
       return Array.isArray(saved.records) && saved.records.length > 0;
     } catch (error) {
       console.warn('Não foi possível restaurar o fechamento salvo:', error.message);
-      return false;
+      if (Array.isArray(localSaved.records)) cashFlowState.records = localSaved.records;
+      if (localSaved.fileName) cashFlowState.fileName = localSaved.fileName;
+      if (localSaved.importedAt) cashFlowState.importedAt = localSaved.importedAt;
+      return Array.isArray(localSaved.records) && localSaved.records.length > 0;
     }
   }
 
@@ -182,15 +214,13 @@
   }
 
   function saveClosingState() {
+    var saved = { records: cashFlowState.records, fileName: cashFlowState.fileName, importedAt: cashFlowState.importedAt };
     try {
-      localStorage.setItem(cashFlowStorageKey, JSON.stringify({
-        records: cashFlowState.records,
-        fileName: cashFlowState.fileName,
-        importedAt: cashFlowState.importedAt
-      }));
+      localStorage.setItem(cashFlowStorageKey, JSON.stringify(saved));
     } catch (error) {
       console.warn('O navegador não conseguiu persistir todo o fechamento:', error.message);
     }
+    savePersistentUiState('financial-closing', saved).catch(function (error) { console.warn('Falha ao persistir o fechamento no servidor:', error.message); });
   }
 
   function classifyBudgetRows(details, zeroValues) {
@@ -1235,7 +1265,7 @@
       var favorable = variance > 0;
       var status = Math.abs(percent || 0) <= .05 ? 'neutral' : favorable ? 'good' : 'bad';
       var label = status === 'neutral' ? 'Neutro' : favorable ? 'Favorável' : 'Desfavorável';
-      var comment = localStorage.getItem('closing-comment-' + r.label) || r.comment;
+      var comment = closingComments[r.label] || r.comment;
       var hierarchyAttributes = r.rowId
         ? ' data-cash-row="' + r.rowId + '"'
         : (r.parentId ? ' class="cash-hidden budget-category" data-cash-parent="' + r.parentId + '"' : '');
@@ -1264,7 +1294,12 @@
       (budgetDatabase.years[String(budgetYear)] ? 'Orçamento salvo no sistema' : 'Orçamento ainda não salvo') +
       '</span></div><div class="closing-table-wrap"><table class="closing-table"><thead><tr><th>Classificação / Categoria</th><th>Realizado</th><th>Orçado</th><th>Variação R$</th><th>Variação %</th><th>Atingimento</th><th>Status</th><th>Comentário</th></tr></thead><tbody>' + body + '</tbody></table></div></div></div>';
     Array.from(document.querySelectorAll('.budget-comment')).forEach(function (input) {
-      input.addEventListener('change', function () { localStorage.setItem('closing-comment-' + decodeURIComponent(input.dataset.line), input.value); });
+      input.addEventListener('change', function () {
+        var label = decodeURIComponent(input.dataset.line);
+        closingComments[label] = input.value;
+        try { localStorage.setItem('closing-comment-' + label, input.value); } catch (error) {}
+        savePersistentUiState('closing-comments', closingComments).catch(function (error) { console.warn(error.message); });
+      });
     });
     var selector = document.getElementById('budgetMonth');
     if (selector) selector.addEventListener('change', function () { renderBudget(selector.value, budgetYear); });
@@ -1418,7 +1453,7 @@
   window.financialClosing.removeExternalRecord = removeExternalCashRecord;
 
   async function boot() {
-    var restored = loadClosingState();
+    var restored = await loadClosingState();
     try { financialCompanies = (await fetch('/api/accounts', { cache: 'no-store' }).then(function (response) { return response.json(); })).companies || []; } catch (error) { financialCompanies = []; }
     await loadFinancialSeed(restored);
     await loadFinancialMappings();

@@ -54,6 +54,7 @@ const pricingRulesPath = path.join(dataDir, 'pricing-rules.json');
 const pricingDatabasePath = path.join(dataDir, 'pricing-database.json');
 const budgetsPath = path.join(dataDir, 'budgets.json');
 const accountsPath = path.join(dataDir, 'accounts.json');
+const uiStatePath = path.join(dataDir, 'ui-state.json');
 const financialMappingPath = path.join(dataDir, 'de_para_categoria_classificacao.csv');
 
 const intelligentAnalysisCachePath = path.join(dataDir, 'ai-intelligent-cache.json');
@@ -444,6 +445,43 @@ function writeJsonWithRetry(filePath, value, attempts = 10) {
   }
 
   throw lastError;
+}
+
+const persistentUiStateKeys = new Set(['financial-closing', 'closing-comments', 'full-planner', 'forecast-scenarios', 'manual-goals']);
+
+function readUiState() {
+  if (!fs.existsSync(uiStatePath)) return { version: 1, values: {}, updatedAt: null };
+  try {
+    const value = JSON.parse(fs.readFileSync(uiStatePath, 'utf8'));
+    return { version: 1, values: value.values && typeof value.values === 'object' ? value.values : {}, updatedAt: value.updatedAt || null };
+  } catch (error) {
+    return { version: 1, values: {}, updatedAt: null };
+  }
+}
+
+function handleUiStateGet(request, response) {
+  const url = new URL(request.url, 'http://localhost');
+  const key = String(url.searchParams.get('key') || '');
+  if (key && !persistentUiStateKeys.has(key)) return sendJson(response, 400, { error: 'Chave de estado invalida.' });
+  const state = readUiState();
+  sendJson(response, 200, key ? { key, value: Object.prototype.hasOwnProperty.call(state.values, key) ? state.values[key] : null, updatedAt: state.updatedAt } : state);
+}
+
+async function handleUiStateUpdate(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, maxUploadBytes);
+    const key = String(payload.key || '');
+    if (!persistentUiStateKeys.has(key)) return sendJson(response, 400, { error: 'Chave de estado invalida.' });
+    const state = readUiState();
+    if (payload.action === 'delete') delete state.values[key];
+    else if (payload.action === 'set') state.values[key] = payload.value;
+    else return sendJson(response, 400, { error: 'Acao de estado invalida.' });
+    state.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(uiStatePath, state);
+    sendJson(response, 200, { key, value: Object.prototype.hasOwnProperty.call(state.values, key) ? state.values[key] : null, updatedAt: state.updatedAt });
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });
+  }
 }
 
 function readBudgets() {
@@ -3953,6 +3991,16 @@ const server = http.createServer((request, response) => {
   if (request.method === 'POST' && requestPath === '/api/admin/validate') {
     if (!requireAdmin(request, response)) return;
     sendJson(response, 200, { valid: true });
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/ui-state') {
+    handleUiStateGet(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ui-state') {
+    handleUiStateUpdate(request, response);
     return;
   }
 
