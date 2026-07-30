@@ -267,6 +267,7 @@
 
   async function publishIntegration(passwordOverride, mergeChannel) {
     var password = typeof passwordOverride === 'string' ? passwordOverride : passwordInput.value;
+    var shouldMergeChannel = mergeChannel !== false;
     if (!password) {
       setStatus('Informe a senha', 'A senha administrativa é necessária para publicar as bases mensais.', 'error');
       return;
@@ -279,7 +280,7 @@
       for (var index = 0; index < monthKeys.length; index += 1) {
         var month = monthKeys[index];
         var monthRows = integrationPreview.byMonth[month];
-        if (mergeChannel && typeof loadSalesHistoryRowsByMonth === 'function') {
+        if (shouldMergeChannel && typeof loadSalesHistoryRowsByMonth === 'function') {
           await loadSalesHistoryRowsByMonth();
           var existing = dashboardState.salesHistoryRowsByMonth && dashboardState.salesHistoryRowsByMonth[month];
           if (existing && Array.isArray(existing.dataRows) && existing.dataRows.length) {
@@ -315,9 +316,9 @@
       dashboardState.salesHistoryRowsByMonth = {};
       dashboardState.renderedPanels = {};
       var lastMonth = monthKeys[monthKeys.length - 1];
-      var lastRows = integrationPreview.byMonth[lastMonth];
       dashboardState.activeMonth = lastMonth;
-      processRows(lastRows, 'Base gerada · ' + integrationPreview.fileName, true);
+      var lastRows = await loadRowsFromMetadata(dashboardState.monthMetadata[lastMonth]);
+      processRows(lastRows, 'Base consolidada · ' + integrationPreview.fileName, true);
       renderMonthTabs();
       renderLastUpdate(dashboardState.monthMetadata[lastMonth]);
       setStatus('Publicação concluída', monthKeys.length + ' meses atualizados sem duplicação. A Base de Dados e os painéis já podem ler os novos valores.', 'success');
@@ -370,7 +371,7 @@
     }
   });
 
-  publishButton.addEventListener('click', publishIntegration);
+  publishButton.addEventListener('click', function () { publishIntegration(undefined, true); });
   window.salesBaseIntegration = {
     stageTreatedRows: function (rows, fileName) {
       stagedDiscardedRows = 0;
