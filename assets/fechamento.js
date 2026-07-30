@@ -85,8 +85,6 @@
         var cmv = 0;
         var tax = 0;
         var mkp = 0;
-        var importedGrossMargin = 0;
-        var importedGrossMarginRows = 0;
         if (dataset && Array.isArray(dataset.dataRows)) {
           dataset.dataRows.forEach(function (row) {
             var category = getSalesHistoryCell(row, dataset.columns.category);
@@ -112,14 +110,6 @@
               mkp += amount;
               return;
             }
-            if (categoryKey === normalizeText('GM') ||
-                categoryKey === normalizeText('Gross margen') ||
-                categoryKey === normalizeText('Gross margin')) {
-              importedGrossMargin += amount;
-              importedGrossMarginRows += 1;
-              return;
-            }
-
             var categoryNumberMatch = String(category || '').trim().match(/^(\d{1,2})\s*\./);
             var categoryNumber = categoryNumberMatch ? Number(categoryNumberMatch[1]) : 0;
             if (categoryKey === normalizeText('CMV') ||
@@ -136,7 +126,7 @@
           cmv: cmv,
           tax: tax,
           mkp: mkp,
-          contribution: importedGrossMarginRows ? importedGrossMargin : calculatedGrossMargin
+          contribution: calculatedGrossMargin
         });
       });
 
@@ -957,8 +947,18 @@
   function renderDre() {
     var year = 2026;
     var yearRecords = filterFinancialRecords(cashFlowState.records).filter(function (record) { return record.year === year; });
+    var salesMonths = salesDre.year === year
+      ? Object.keys(salesDre.months || {}).filter(function (monthKey) {
+        var month = salesDre.months[monthKey] || {};
+        return [month.revenue, month.cmv, month.tax, month.mkp, month.contribution].some(function (value) {
+          return Number(value) !== 0;
+        });
+      }).map(Number)
+      : [];
     var activeMonths = Array.from(new Set(yearRecords
-      .map(function (record) { return record.month; }).filter(Boolean))).sort(function (a, b) { return a - b; });
+      .map(function (record) { return record.month; })
+      .concat(salesMonths)
+      .filter(Boolean))).sort(function (a, b) { return a - b; });
     var structure = dreStructure.length ? dreStructure : [
       { label: 'FATURAMENTO TOTAL', subtotal: 0 }, { label: 'CUSTO DE PRODUTO VENDIDO', subtotal: 0 },
       { label: 'IMPOSTO', subtotal: 0 }, { label: 'DESPESAS COM MKP E SITE', subtotal: 0 },
