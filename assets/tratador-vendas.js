@@ -240,7 +240,7 @@
     var original=button.textContent;
     try{
       button.disabled=true;button.textContent='Retratando...';status.textContent='Recuperando todos os meses tratados e recalculando o CMV...';
-      var costMap=await costs(),combined=[],updatedMonths=0,updatedRows=0;
+      var costMap=await costs(),combined=[],updatedMonths=0,updatedRows=0,seenRows=new Set();
       for(var channelIndex=0;channelIndex<state.channels.length;channelIndex+=1){
         var channel=state.channels[channelIndex],records=(channel.treatmentHistory||[]).filter(function(item){return item.storedName;});
         for(var recordIndex=0;recordIndex<records.length;recordIndex+=1){
@@ -250,17 +250,25 @@
           var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel recuperar o tratamento mensal.');
           var repriced=repriceTreatedRows(result.rows,costMap),range=treatmentRange(repriced);
           await recordTreatment({action:'record-treatment',id:channel.id,month:item.month,year:item.year,rowCount:repriced.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:item.sourceFile||'',missingCostSkus:item.missingCostSkus||0,rows:repriced});
-          combined=appendCompatibleRows(combined,repriced);updatedMonths+=1;updatedRows+=Math.max(0,repriced.length-1);
+          var uniqueRows=[repriced[0]].concat(repriced.slice(1).filter(function(row){
+            var fingerprint=JSON.stringify(row);
+            if(seenRows.has(fingerprint))return false;
+            seenRows.add(fingerprint);return true;
+          }));
+          combined=appendCompatibleRows(combined,uniqueRows);updatedMonths+=1;updatedRows+=Math.max(0,uniqueRows.length-1);
         }
       }
       if(combined.length<2)throw new Error('Nenhum mes tratado com arquivo salvo foi encontrado.');
       if(!window.salesBaseIntegration)throw new Error('A integracao da Base de Vendas nao esta disponivel.');
       status.textContent='Gerando a base consolidada de todas as contas...';
       await window.salesBaseIntegration.prepareTreatedRows(combined,'Retratamento completo · '+updatedMonths+' meses');
-      status.textContent='Publicando todos os meses e todas as contas...';
+      status.textContent='Criando backup e removendo as bases publicadas anteriormente...';
+      var clearResponse=await fetch('/api/sales-treaters/clear-published',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({confirm:true})});
+      var clearResult=await clearResponse.json();if(!clearResponse.ok)throw new Error(clearResult.error||'Nao foi possivel substituir as bases anteriores.');
+      status.textContent='Bases anteriores removidas. Publicando todos os meses e todas as contas...';
       var published=await window.salesBaseIntegration.publishPrepared(password,false);
       if(published===false)throw new Error('Nao foi possivel concluir a publicacao das bases.');
-      status.textContent=updatedMonths+' tratamento(s), '+updatedRows.toLocaleString('pt-BR')+' vendas recalculadas e republicadas com o CMV atual.';
+      status.textContent=updatedMonths+' tratamento(s), '+updatedRows.toLocaleString('pt-BR')+' vendas recalculadas e republicadas com o CMV atual. Backup: '+clearResult.backup+'.';
       alert('Atualizacao concluida. Todas as contas foram mantidas e o CMV foi recalculado em '+updatedMonths+' tratamento(s).');
     }catch(error){status.textContent=error.message;alert(error.message);}finally{button.disabled=false;button.textContent=original;}
   }

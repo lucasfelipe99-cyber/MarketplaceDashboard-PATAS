@@ -1788,6 +1788,44 @@ async function handleRefreshAllPublishedBases(request, response) {
   }
 }
 
+async function handleClearPublishedSalesBases(request, response) {
+  if (!requireAdmin(request, response)) return;
+  try {
+    const payload = await collectJsonRequest(request, 64 * 1024);
+    if (payload.confirm !== true) return sendJson(response, 400, { error: 'Confirme a substituicao integral das bases.' });
+    const metadata = readMetadata();
+    const area = metadata.areas && metadata.areas.area1 || { months: {} };
+    const monthEntries = Object.entries(area.months || {});
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupDir = path.join(dataDir, 'base-replacement-backups', stamp);
+    fs.mkdirSync(backupDir, { recursive: true });
+    if (fs.existsSync(metadataPath)) fs.copyFileSync(metadataPath, path.join(backupDir, 'metadata.json'));
+    let removedFiles = 0;
+    monthEntries.forEach(([, item]) => {
+      [item && item.storedName, item && item.rowsName].filter(Boolean).forEach((name) => {
+        const filePath = resolveDataFilePath(name);
+        if (!filePath || !fs.existsSync(filePath)) return;
+        fs.copyFileSync(filePath, path.join(backupDir, path.basename(filePath)));
+        fs.rmSync(filePath, { force: true });
+        removedFiles += 1;
+      });
+    });
+    metadata.areas = metadata.areas || {};
+    metadata.areas.area1 = { ...area, months: {}, replacedAt: new Date().toISOString() };
+    delete metadata.forecast;
+    writeJsonWithRetry(metadataPath, metadata);
+    sendJson(response, 200, {
+      removedMonths: monthEntries.length,
+      removedFiles,
+      backup: path.relative(dataDir, backupDir).replace(/\\/g, '/'),
+      replacedAt: metadata.areas.area1.replacedAt
+    });
+  } catch (error) {
+    console.error('Erro ao limpar bases para substituicao:', error);
+    sendJson(response, 500, { error: 'Nao foi possivel preparar a substituicao das bases: ' + error.message });
+  }
+}
+
 function readMagaluIds() {
   const filePath = path.join(__dirname, 'lib', 'magalu-ids.csv');
   if (!fs.existsSync(filePath)) return {};
@@ -4091,6 +4129,11 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestPath === '/api/sales-treaters/refresh-all') {
     handleRefreshAllPublishedBases(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/clear-published') {
+    handleClearPublishedSalesBases(request, response);
     return;
   }
 
