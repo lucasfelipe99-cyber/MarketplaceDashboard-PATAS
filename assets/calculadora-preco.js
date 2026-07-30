@@ -53,6 +53,7 @@
   function allSkus() {
     var map = {};
     Object.values(master.skus || {}).forEach(function (item) { if (item.sku) map[item.sku] = item; });
+    (database.pendingCosts || []).forEach(function (item) { if (item.sku) map[item.sku] = Object.assign({}, map[item.sku], item); });
     Object.values(database.costs || {}).forEach(function (item) { if (item.sku) map[item.sku] = Object.assign({}, map[item.sku], item); });
     return Object.values(map).sort(function (a, b) { return String(a.sku).localeCompare(String(b.sku), 'pt-BR'); });
   }
@@ -60,7 +61,8 @@
     return allSkus().map(function (item) { return '<option value="' + escapeHtml(item.sku) + '">' + escapeHtml(item.description || '') + '</option>'; }).join('');
   }
   function skuInfo(sku) {
-    return Object.assign({}, (master.skus || {})[sku] || {}, (database.costs || {})[sku] || {}, { sku: sku });
+    var pending=(database.pendingCosts||[]).find(function(item){return item.sku===sku;})||{};
+    return Object.assign({}, (master.skus || {})[sku] || {}, pending, (database.costs || {})[sku] || {}, { sku: sku });
   }
   function ruleById(id) {
     return (rulesState.rules || []).find(function (rule) { return rule.id === id; }) || {};
@@ -365,7 +367,7 @@
 
   function renderCostRegistration() {
     var pendingImport = [];
-    costContainer.innerHTML = '<div class="pricing-page"><section class="pricing-card pricing-hero"><div class="pricing-heading"><strong>Cadastro de Custos por SKU</strong><span>Os mesmos dados também podem ser editados diretamente na calculadora.</span></div><span class="inventory-link" id="costRegisteredCount">' + Object.keys(database.costs || {}).length + ' SKUs cadastrados</span></section>' +
+    costContainer.innerHTML = '<div class="pricing-page"><section class="pricing-card pricing-hero"><div class="pricing-heading"><strong>Cadastro de Custos por SKU</strong><span>Os produtos sem custo aparecem automaticamente em vermelho para cadastro.</span></div><span class="inventory-link" id="costRegisteredCount">' + Object.keys(database.costs || {}).length + ' cadastrados · ' + (database.pendingCosts || []).length + ' pendentes</span></section>' +
       '<section class="pricing-card pricing-import"><div class="pricing-import-head"><div><strong>Importar cadastro por planilha</strong><span>Use o modelo CSV com as colunas SKU, DESCRIÇÃO, CUSTO, ALTURA, LARGURA, COMPR. e PESO REAL.</span></div><label class="pricing-button primary" for="costCsvFile">Selecionar CSV</label><input id="costCsvFile" type="file" accept=".csv,text/csv" hidden></div>' +
       '<div class="pricing-import-map"><span>DE → PARA</span><b>CUSTO → Custo do produto</b><b>COMPR. → Comprimento (cm)</b><b>PESO REAL (g) → Peso real (kg)</b></div>' +
       '<div id="costImportPreview" class="pricing-import-preview">Selecione o arquivo preenchido para conferir antes de importar.</div><div class="pricing-import-actions"><button class="pricing-button primary" id="costImportButton" type="button" disabled>Importar produtos</button></div><div class="pricing-status" id="costImportStatus"></div></section>' +
@@ -391,9 +393,9 @@
       dimensions();
     }
     function table() {
-      var rows = Object.values(database.costs || {});
+      var rows = (database.pendingCosts || []).concat(Object.values(database.costs || {}));
       document.getElementById('costTable').innerHTML = rows.length ? '<div class="pricing-table-scroll"><table class="pricing-history-table"><thead><tr><th>SKU</th><th>Descrição</th><th>Categoria</th><th>Custo</th><th>Peso frete</th><th>Atualização</th><th>Responsável</th></tr></thead><tbody>' +
-        rows.map(function (row) { return '<tr data-cost-sku="' + escapeHtml(row.sku) + '"><td><strong>' + escapeHtml(row.sku) + '</strong></td><td>' + escapeHtml(row.description) + '</td><td>' + escapeHtml(row.category) + '</td><td>' + money(row.productCost) + '</td><td>' + number(row.consideredWeight).toFixed(3) + ' kg</td><td>' + escapeHtml(dateTime(row.updatedAt)) + '</td><td>' + escapeHtml(row.responsible) + '</td></tr>'; }).join('') +
+        rows.map(function (row) { return '<tr data-cost-sku="' + escapeHtml(row.sku) + '"'+(row.pending?' class="pricing-cost-pending"':'')+'><td><strong>' + escapeHtml(row.sku) + '</strong></td><td>' + escapeHtml(row.description) + '</td><td>' + escapeHtml(row.category) + '</td><td>' + (row.pending?'<strong>SEM CUSTO</strong>':money(row.productCost)) + '</td><td>' + (row.pending?'—':number(row.consideredWeight).toFixed(3) + ' kg') + '</td><td>' + (row.pending?'Pendente':escapeHtml(dateTime(row.updatedAt))) + '</td><td>' + (row.pending?'Cadastrar':escapeHtml(row.responsible)) + '</td></tr>'; }).join('') +
         '</tbody></table></div>' : '<div class="pricing-empty">Nenhum custo cadastrado.</div>';
       document.querySelectorAll('[data-cost-sku]').forEach(function (row) { row.addEventListener('click', function () { document.getElementById('costSku').value = row.dataset.costSku; fill(); }); });
     }

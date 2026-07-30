@@ -1997,20 +1997,53 @@ async function handlePricingRulesUpdate(request, response) {
 
 function readPricingDatabase() {
   if (!fs.existsSync(pricingDatabasePath)) {
-    return { version: 2, costs: {}, history: [], lastPricing: {}, updatedAt: null };
+    return { version: 2, costs: {}, history: [], lastPricing: {}, pendingCosts: findPublishedSkusWithoutCost({}), updatedAt: null };
   }
   try {
     const value = JSON.parse(fs.readFileSync(pricingDatabasePath, 'utf8'));
-    return {
+    const state = {
       version: 2,
       costs: value.costs && typeof value.costs === 'object' ? value.costs : {},
       history: Array.isArray(value.history) ? value.history : [],
       lastPricing: value.lastPricing && typeof value.lastPricing === 'object' ? value.lastPricing : {},
       updatedAt: value.updatedAt || null
     };
+    state.pendingCosts = findPublishedSkusWithoutCost(state.costs);
+    return state;
   } catch (error) {
-    return { version: 2, costs: {}, history: [], lastPricing: {}, updatedAt: null };
+    return { version: 2, costs: {}, history: [], lastPricing: {}, pendingCosts: [], updatedAt: null };
   }
+}
+
+function findPublishedSkusWithoutCost(costs) {
+  const pending = new Map();
+  const metadata = readMetadata();
+  Object.values(metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {}).forEach((month) => {
+    if (!month || !month.rowsName) return;
+    try {
+      const rows = readPublishedRows(month);
+      const headers = Array.isArray(rows[0]) ? rows[0] : [];
+      const indexOf = (aliases) => headers.findIndex((header) => aliases.includes(normalizeAdsText(header)));
+      const skuIndex = indexOf(['sku', 'numero de referencia sku']);
+      const descriptionIndex = indexOf(['descricao', 'titulo do anuncio', 'nome do produto']);
+      const categoryIndex = indexOf(['categoria2', 'categoria']);
+      if (skuIndex < 0) return;
+      rows.slice(1).forEach((row) => {
+        const sku = String(row[skuIndex] || '').trim();
+        if (!sku || Object.prototype.hasOwnProperty.call(costs || {}, sku) || pending.has(sku)) return;
+        pending.set(sku, {
+          sku,
+          description: descriptionIndex >= 0 ? String(row[descriptionIndex] || '').trim() : '',
+          category: categoryIndex >= 0 ? String(row[categoryIndex] || '').trim() : '',
+          productCost: null,
+          pending: true
+        });
+      });
+    } catch (error) {
+      console.warn('Nao foi possivel procurar SKUs sem custo em', month.rowsName, error.message);
+    }
+  });
+  return Array.from(pending.values()).sort((a, b) => a.sku.localeCompare(b.sku, 'pt-BR'));
 }
 
 function validNonNegativeNumber(value, field) {
@@ -2101,7 +2134,9 @@ async function handlePricingDatabaseUpdate(request, response) {
     }
 
     state.updatedAt = now;
+    delete state.pendingCosts;
     writeJsonWithRetry(pricingDatabasePath, state);
+    state.pendingCosts = findPublishedSkusWithoutCost(state.costs);
     sendJson(response, 200, state);
   } catch (error) {
     sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON invalido.' : error.message });

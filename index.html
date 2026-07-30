@@ -12343,9 +12343,9 @@
       const costDetails = buildCostDetailsFromSummary(summary, lookup);
       const totalCost = sumStatementRows(costDetails);
       const calculatedGrossMargin = addPairs(netRevenue, marketplaceExpenses, totalCost);
-      const importedGrossMargin = sumCategoryPair(lookup, ['GM', 'Gross margen', 'Gross margin']);
-      const importedGrossMarginCount = countCategory(lookup, ['GM', 'Gross margen', 'Gross margin']);
-      const grossMargin = importedGrossMarginCount > 0 ? importedGrossMargin : calculatedGrossMargin;
+      // Publicidade e outros ajustes podem entrar depois das vendas. Por isso,
+      // a GM deve ser sempre reconstruída pelas linhas atuais do demonstrativo.
+      const grossMargin = calculatedGrossMargin;
       const grossMarginPercent = dividePair(grossMargin, netRevenue);
 
       const statement = [
@@ -14090,8 +14090,8 @@
   <script src="/assets/estoque.js?v=2"></script>
   <link rel="stylesheet" href="/assets/estoque-full.css?v=4">
   <script src="/assets/estoque-full.js?v=13"></script>
-  <link rel="stylesheet" href="/assets/calculadora-preco.css?v=7">
-  <script src="/assets/calculadora-preco.js?v=11"></script>
+  <link rel="stylesheet" href="/assets/calculadora-preco.css?v=8">
+  <script src="/assets/calculadora-preco.js?v=12"></script>
 </body>
 </html>
 
