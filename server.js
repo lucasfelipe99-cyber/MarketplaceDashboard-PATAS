@@ -1601,7 +1601,7 @@ function readSalesTreaters() {
 
 async function handleSalesTreatersUpdate(request, response) {
   try {
-    const payload = await collectJsonRequest(request, 1024 * 1024);
+    const payload = await collectJsonRequest(request, maxUploadBytes);
     const state = readSalesTreaters();
     if (payload.action === 'upsert-channel') {
       const marketplace = String(payload.marketplace || '').trim();
@@ -1650,6 +1650,16 @@ async function handleSalesTreatersUpdate(request, response) {
         uploadedAt: new Date().toISOString()
       };
       const existingIndex = history.findIndex((item) => String(item.month) === month && Number(item.year) === resolvedYear);
+      const treatedRows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (treatedRows.length > 1 && Array.isArray(treatedRows[0])) {
+        const treatedName = 'sales-treatment-' + channel.id + '-' + resolvedYear + '-' + month + '.json';
+        const treatedPath = resolveDataFilePath(treatedName);
+        if (!treatedPath) return sendJson(response, 400, { error: 'Destino invalido para o arquivo tratado.' });
+        writeJsonWithRetry(treatedPath, { version: 1, channelId: channel.id, month, year: resolvedYear, rows: treatedRows, savedAt: record.uploadedAt });
+        record.storedName = treatedName;
+      } else if (existingIndex >= 0 && history[existingIndex].storedName) {
+        record.storedName = history[existingIndex].storedName;
+      }
       if (existingIndex >= 0) history[existingIndex] = record; else history.push(record);
       channel.treatmentHistory = history
         .sort((a, b) => Number(a.year) - Number(b.year) || Number(a.month) - Number(b.month))
@@ -1663,6 +1673,28 @@ async function handleSalesTreatersUpdate(request, response) {
     sendJson(response, 200, state);
   } catch (error) {
     sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'JSON inválido.' : error.message });
+  }
+}
+
+function handleSalesTreatedRows(request, response) {
+  try {
+    const url = new URL(request.url, 'http://localhost');
+    const channelId = String(url.searchParams.get('id') || '');
+    const month = normalizeMonth(url.searchParams.get('month'));
+    const year = Math.trunc(Number(url.searchParams.get('year')));
+    const state = readSalesTreaters();
+    const channel = state.channels.find((item) => item.id === channelId);
+    if (!channel || !month || !Number.isInteger(year)) return sendJson(response, 404, { error: 'Tratamento mensal nao encontrado.' });
+    const record = (Array.isArray(channel.treatmentHistory) ? channel.treatmentHistory : [])
+      .find((item) => String(item.month) === month && Number(item.year) === year);
+    const storedPath = record && record.storedName ? resolveDataFilePath(record.storedName) : '';
+    if (!storedPath || !fs.existsSync(storedPath)) return sendJson(response, 404, { error: 'Os dados deste mes precisam ser tratados novamente.' });
+    const value = JSON.parse(fs.readFileSync(storedPath, 'utf8'));
+    const rows = Array.isArray(value.rows) ? value.rows : [];
+    if (rows.length < 2) return sendJson(response, 404, { error: 'O tratamento mensal salvo esta vazio.' });
+    sendJson(response, 200, { month, year, rows, savedAt: value.savedAt || record.uploadedAt || null });
+  } catch (error) {
+    sendJson(response, 500, { error: 'Nao foi possivel carregar o tratamento mensal: ' + error.message });
   }
 }
 
@@ -4001,6 +4033,11 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestPath === '/api/sales-treaters') {
     handleSalesTreatersUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/sales-treaters/treated-rows') {
+    handleSalesTreatedRows(request, response);
     return;
   }
 

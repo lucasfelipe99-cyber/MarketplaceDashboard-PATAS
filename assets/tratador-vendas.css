@@ -8,6 +8,7 @@
 .treat-refresh-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;width:100%}.treat-refresh-row button{min-height:39px;border:1px solid var(--accent);border-radius:8px;background:color-mix(in srgb,var(--accent) 18%,var(--surface-strong));color:var(--text);padding:8px 14px;font-weight:800;cursor:pointer}.treat-refresh-row button:disabled{opacity:.55;cursor:wait}.treat-refresh-row small{color:var(--text-muted);font-size:10px;text-align:right}
 #treatChannelForm{display:grid;grid-template-columns:150px 200px 110px 130px 110px auto;gap:8px;align-items:end}
 #treatChannelForm input,#treatChannelForm select,#treatChannelForm button,.treat-list button,.treat-password input{min-height:39px;border:1px solid var(--border);border-radius:8px;background:var(--surface-strong);color:var(--text);padding:8px 11px}
+.treat-publish-scope{min-height:39px;border:1px solid var(--border);border-radius:8px;background:var(--surface-strong);color:var(--text);padding:8px 11px}
 #treatChannelForm .treat-shopee-param{display:grid;gap:4px;color:var(--text-muted);font-size:10px}
 #treatChannelForm .treat-shopee-param[hidden]{display:none}
 .treat-list{display:grid;gap:10px}
