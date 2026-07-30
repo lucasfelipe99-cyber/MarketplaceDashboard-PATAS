@@ -70,8 +70,23 @@
     productCategoryBySku = {};
     Object.keys(master.skus || {}).forEach(function (sku) {
       var item = master.skus[sku];
-      if (item.categoryId && categoryNames[item.categoryId]) productCategoryBySku[sku] = categoryNames[item.categoryId];
+      if (item.categoryId && categoryNames[item.categoryId]) {
+        var categoryName = categoryNames[item.categoryId];
+        var normalizedSku = normalized(sku);
+        productCategoryBySku[sku] = categoryName;
+        productCategoryBySku[normalizedSku] = categoryName;
+        if (!productCategoryBySku[normalizedSku.split('-')[0]]) productCategoryBySku[normalizedSku.split('-')[0]] = categoryName;
+      }
     });
+  }
+
+  function categoryForSku(value) {
+    var sku = String(value || '').trim();
+    var normalizedSku = normalized(sku);
+    return productCategoryBySku[sku] ||
+      productCategoryBySku[normalizedSku] ||
+      productCategoryBySku[normalizedSku.split('-')[0]] ||
+      '';
   }
 
   function headerIndex(headers, name) {
@@ -192,7 +207,7 @@
     var generatedAt = new Date().toISOString();
     var generatedRows = Array.from(groups.values()).map(function (item) {
       return [item.marketplace, item.marketplaceSale, item.sku, item.ad, item.date, item.category,
-        item.subcategory, item.value, '', item.description, productCategoryBySku[item.sku] || '', 'Actual', generatedAt, item.date];
+        item.subcategory, item.value, '', item.description, categoryForSku(item.sku), 'Actual', generatedAt, item.date];
     });
     generatedRows.sort(function (a, b) {
       return String(a[4]).localeCompare(String(b[4])) || String(a[2]).localeCompare(String(b[2])) ||

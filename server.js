@@ -1392,6 +1392,16 @@ function applyProductCategoriesToRowsFile(filePath) {
   const marketplaceIndex = normalizedHeaders.indexOf('marketplace');
   const master = readProductMaster();
   const categoryNames = Object.fromEntries((master.categories || []).map((category) => [category.id, category.name]));
+  const categoryBySku = {};
+  Object.keys(master.skus || {}).forEach((masterSku) => {
+    const item = master.skus[masterSku] || {};
+    const categoryName = categoryNames[item.categoryId] || '';
+    if (!categoryName) return;
+    const normalizedSku = normalizeMasterText(masterSku);
+    categoryBySku[normalizedSku] = categoryName;
+    const baseSku = normalizedSku.split('-')[0];
+    if (baseSku && !categoryBySku[baseSku]) categoryBySku[baseSku] = categoryName;
+  });
   let masterChanged = false;
   rows.slice(1).forEach((row) => {
     const sku = String(row[skuIndex] || '').trim();
@@ -1406,7 +1416,11 @@ function applyProductCategoriesToRowsFile(filePath) {
       firstSeen: existing.firstSeen || new Date().toISOString(),
       lastSeen: new Date().toISOString()
     };
-    row[categoryIndex] = categoryNames[master.skus[sku].categoryId] || '';
+    const normalizedSku = normalizeMasterText(sku);
+    row[categoryIndex] = categoryNames[master.skus[sku].categoryId] ||
+      categoryBySku[normalizedSku] ||
+      categoryBySku[normalizedSku.split('-')[0]] ||
+      '';
   });
   payload.rows = rows;
   fs.writeFileSync(filePath, JSON.stringify(payload));

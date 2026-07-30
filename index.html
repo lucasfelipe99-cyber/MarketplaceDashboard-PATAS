@@ -4707,11 +4707,11 @@
           <button class="tab-button" type="button" data-tab="financialConfigPanel"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Configurações Financeiras</span></button>
         </div>
 
-        <button class="sidebar-section-toggle" type="button" aria-expanded="false" aria-controls="inventoryNavItems">
+        <button class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="inventoryNavItems">
           <span class="sidebar-section-icon" aria-hidden="true">›</span>
           <span class="nav-label">Estoque</span>
         </button>
-        <div class="nav-section-items" id="inventoryNavItems" hidden>
+        <div class="nav-section-items" id="inventoryNavItems">
           <button class="tab-button" type="button" data-tab="inventoryEntriesPanel"><span class="nav-icon" aria-hidden="true">E</span><span class="nav-label">Entradas de Estoque</span></button>
           <button class="tab-button" type="button" data-tab="inventoryAveragePanel"><span class="nav-icon" aria-hidden="true">C</span><span class="nav-label">Custo Médio</span></button>
           <button class="tab-button" type="button" data-tab="inventoryFullPanel"><span class="nav-icon" aria-hidden="true">F</span><span class="nav-label">Estoque Full</span></button>
@@ -12523,7 +12523,21 @@
       const lookup = new Map();
 
       summary.forEach(function (item) {
-        lookup.set(normalizeText(item.name), item);
+        const key = normalizeText(item.name);
+        const current = lookup.get(key);
+
+        if (current) {
+          current.actual += Number(item.actual) || 0;
+          current.forecast += Number(item.forecast) || 0;
+          current.count += Number(item.count) || 0;
+        } else {
+          lookup.set(key, {
+            name: item.name,
+            actual: Number(item.actual) || 0,
+            forecast: Number(item.forecast) || 0,
+            count: Number(item.count) || 0
+          });
+        }
       });
 
       return lookup;
@@ -14077,7 +14091,7 @@
         .replaceAll("'", '&#039;');
     }
   </script>
-  <script src="/assets/vendas-upload.js?v=20-20260730"></script>
+  <script src="/assets/vendas-upload.js?v=21-20260730"></script>
   <link rel="stylesheet" href="/assets/tratador-vendas.css?v=7-20260730">
   <script src="/assets/tratador-vendas.js?v=21-20260730"></script>
   <link rel="stylesheet" href="/assets/product-master.css?v=2">
