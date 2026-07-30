@@ -178,6 +178,12 @@
 
   async function save(payload) { var response = await fetch('/api/sales-treaters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); var result=await response.json(); if(!response.ok) throw new Error(result.error||'Não foi possível salvar.'); state=result; render(); }
   async function recordTreatment(payload) { var response=await fetch('/api/sales-treaters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel registrar o tratamento.');state=result;return result; }
+  async function applyFreightAgreements(rows){
+    var response=await fetch('/api/freight-agreements/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:rows})});
+    var result=await response.json();
+    if(!response.ok)throw new Error(result.error||'Não foi possível aplicar o Frete a Combinar.');
+    return result;
+  }
   function repriceTreatedRows(rows,costMap){
     if(!Array.isArray(rows)||rows.length<2)return rows;
     var headers=rows[0]||[];
@@ -246,11 +252,11 @@
         for(var recordIndex=0;recordIndex<records.length;recordIndex+=1){
           var item=records[recordIndex];
           status.textContent='Retratando '+channel.channelName+' · '+months[Number(item.month)-1]+'/'+item.year+'...';
-          var response=await fetch('/api/sales-treaters/treated-rows?id='+encodeURIComponent(channel.id)+'&month='+encodeURIComponent(item.month)+'&year='+encodeURIComponent(item.year),{cache:'no-store'});
+          var response=await fetch('/api/sales-treaters/treated-rows?id='+encodeURIComponent(channel.id)+'&month='+encodeURIComponent(item.month)+'&year='+encodeURIComponent(item.year)+'&source=1',{cache:'no-store'});
           var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel recuperar o tratamento mensal.');
-          var repriced=repriceTreatedRows(result.rows,costMap),range=treatmentRange(repriced);
-          await recordTreatment({action:'record-treatment',id:channel.id,month:item.month,year:item.year,rowCount:repriced.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:item.sourceFile||'',missingCostSkus:item.missingCostSkus||0,rows:repriced});
-          var uniqueRows=[repriced[0]].concat(repriced.slice(1).filter(function(row){
+          var repriced=repriceTreatedRows(result.rows,costMap),freightResult=await applyFreightAgreements(repriced),adjusted=freightResult.rows,range=treatmentRange(adjusted);
+          await recordTreatment({action:'record-treatment',id:channel.id,month:item.month,year:item.year,rowCount:adjusted.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:item.sourceFile||'',missingCostSkus:item.missingCostSkus||0,sourceRows:repriced,rows:adjusted});
+          var uniqueRows=[adjusted[0]].concat(adjusted.slice(1).filter(function(row){
             var fingerprint=JSON.stringify(row);
             if(seenRows.has(fingerprint))return false;
             seenRows.add(fingerprint);return true;
@@ -345,13 +351,16 @@
       var rows=result.rows;
       var unitsOutputIndex=find(rows[0],['Unidades']);
       rows=[rows[0]].concat(rows.slice(1).filter(function(row){return unitsOutputIndex<0||typeof row[unitsOutputIndex]==='number';}));
+      var sourceRows=rows.map(function(row){return row.slice();}),freightResult=await applyFreightAgreements(sourceRows);
+      rows=freightResult.rows;
       preparedRows[channel.id]=preparedRows[channel.id]||{};preparedRows[channel.id][month.value]=rows;if(publish)publish.disabled=false;
       if(key!=='mercado livre')downloadTreated(rows,channel,month.value);
       var range=treatmentRange(rows),sourceFile=inputs.map(function(input){return input.files[0]&&input.files[0].name;}).filter(Boolean).join(' + ');
-      await recordTreatment({action:'record-treatment',id:channel.id,month:month.value,year:range.year,rowCount:rows.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:sourceFile,missingCostSkus:num(result.summary.missingCostSkus),rows:rows});
+      await recordTreatment({action:'record-treatment',id:channel.id,month:month.value,year:range.year,rowCount:rows.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:sourceFile,missingCostSkus:num(result.summary.missingCostSkus),sourceRows:sourceRows,rows:rows});
       var updatedChannel=state.channels.find(function(item){return item.id===channel.id;}),historyBox=card.querySelector('[data-treatment-history]');if(historyBox&&updatedChannel)historyBox.outerHTML=historyHtml(updatedChannel);
       var readyLabels=preparedMonths(channel.id).map(function(value){return months[Number(value)-1];}).join(', ');
-      status.textContent=key!=='mercado livre'?(rows.length-1).toLocaleString('pt-BR')+' linhas processadas · '+num(result.summary.missingCostSkus).toLocaleString('pt-BR')+' SKU(s) sem custo · XLSX baixado e mês registrado.':(rows.length-1).toLocaleString('pt-BR')+' vendas tratadas para '+months[Number(month.value)-1]+' · meses prontos para envio conjunto: '+readyLabels+'.';
+      var freightText=freightResult.summary.adjustedOrders?' · '+freightResult.summary.adjustedOrders.toLocaleString('pt-BR')+' venda(s) com Frete a Combinar':'';
+      status.textContent=key!=='mercado livre'?(rows.length-1).toLocaleString('pt-BR')+' linhas processadas · '+num(result.summary.missingCostSkus).toLocaleString('pt-BR')+' SKU(s) sem custo'+freightText+' · XLSX baixado e mês registrado.':(rows.length-1).toLocaleString('pt-BR')+' vendas tratadas para '+months[Number(month.value)-1]+freightText+' · meses prontos para envio conjunto: '+readyLabels+'.';
     }catch(err){status.textContent=err.message;}finally{treat.disabled=false;}
   });
   fetch('/api/sales-treaters',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){state=data;render();}).catch(function(e){container.textContent=e.message;});

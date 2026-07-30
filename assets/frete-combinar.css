@@ -1,0 +1,34 @@
+#freightAgreementPanel{padding:18px}
+.freight-shell{display:grid;gap:16px;color:var(--text)}
+.freight-hero,.freight-upload-card,.freight-table-card,.freight-note{border:1px solid var(--border);border-radius:16px;background:var(--panel)}
+.freight-hero{display:flex;justify-content:space-between;gap:24px;align-items:center;padding:24px}
+.freight-hero span:first-child{color:#66a0ff;text-transform:uppercase;font-size:12px;font-weight:800;letter-spacing:.12em}
+.freight-hero h2{margin:7px 0 5px;font-size:28px}
+.freight-hero p{margin:0;color:var(--muted);line-height:1.55}
+.freight-formula{display:grid;gap:5px;min-width:360px;padding:15px 18px;border:1px solid rgba(80,138,255,.42);border-radius:13px;background:rgba(32,80,160,.13)}
+.freight-formula span{color:#a8c6ff!important;text-transform:none!important;font-size:13px!important;letter-spacing:0!important}
+.freight-upload-card{display:grid;grid-template-columns:minmax(260px,1.2fr) minmax(220px,1fr) minmax(220px,1fr) auto auto;gap:12px;align-items:end;padding:18px}
+.freight-upload-card label{display:grid;gap:7px;color:#91a8d3;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.freight-upload-card input,.freight-upload-card select,.freight-table-head input{height:42px;border:1px solid var(--border);border-radius:10px;background:#121d33;color:var(--text);padding:0 12px}
+.freight-drop input{padding:8px}
+.freight-upload-card button,.freight-table-card button{height:42px;border:1px solid #314568;border-radius:10px;background:#15223a;color:#fff;padding:0 16px;font-weight:750;cursor:pointer}
+.freight-upload-card button.primary{background:#4f88ff;border-color:#4f88ff}
+.freight-upload-card button:disabled,.freight-table-card button:disabled{opacity:.45;cursor:not-allowed}
+.freight-preview,.freight-message{display:flex;justify-content:space-between;gap:18px;padding:14px 18px;border:1px solid rgba(33,210,160,.35);border-radius:12px;background:rgba(0,130,105,.11);color:#4ee5b8}
+.freight-message.error{border-color:rgba(255,77,104,.5);background:rgba(160,25,50,.12);color:#ff738b}
+.freight-table-card{overflow:hidden}
+.freight-table-head{display:flex;justify-content:space-between;gap:20px;align-items:center;padding:18px}
+.freight-table-head h3{margin:0 0 4px}.freight-table-head span{color:var(--muted);font-size:13px}
+.freight-table-head>div:last-child{display:flex;gap:9px}.freight-table-head input{min-width:280px}
+.freight-table-wrap{overflow:auto;max-height:58vh;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.freight-table-wrap table{width:100%;border-collapse:collapse;min-width:900px}
+.freight-table-wrap th,.freight-table-wrap td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+.freight-table-wrap th{position:sticky;top:0;z-index:2;background:#1a2743;color:#cbd9f5;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.freight-table-wrap td:nth-child(2){font-weight:800;color:#ffbe65}.freight-table-wrap td.empty{text-align:center;color:var(--muted);padding:30px}
+.freight-table-wrap button{height:32px;color:#ff91a3;border-color:rgba(255,75,105,.35);background:rgba(150,20,45,.1)}
+.freight-pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 16px;color:var(--muted);font-size:12px}
+.freight-pagination>div{display:flex;gap:8px}.freight-pagination button,.freight-pagination select{height:35px}
+.freight-pagination select{border:1px solid #314568;border-radius:9px;background:#15223a;color:#fff;padding:0 9px}
+.freight-note{display:flex;gap:12px;padding:15px 18px;color:var(--muted)}.freight-note b{color:#f1c466}
+@media(max-width:1150px){.freight-upload-card{grid-template-columns:1fr 1fr}.freight-hero{align-items:flex-start;flex-direction:column}.freight-formula{min-width:0;width:100%;box-sizing:border-box}}
+@media(max-width:700px){#freightAgreementPanel{padding:10px}.freight-upload-card{grid-template-columns:1fr}.freight-table-head,.freight-pagination{align-items:stretch;flex-direction:column}.freight-table-head>div:last-child{flex-direction:column}.freight-table-head input{min-width:0}.freight-preview{flex-direction:column}}

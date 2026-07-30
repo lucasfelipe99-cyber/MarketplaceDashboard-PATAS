@@ -50,6 +50,7 @@ const productMasterPath = path.join(dataDir, 'product-master.json');
 const inventoryPath = path.join(dataDir, 'inventory.json');
 const inventoryFullPath = path.join(dataDir, 'inventory-full.json');
 const salesTreatersPath = path.join(dataDir, 'sales-treaters.json');
+const freightAgreementsPath = path.join(dataDir, 'freight-agreements.json');
 const pricingRulesPath = path.join(dataDir, 'pricing-rules.json');
 const pricingDatabasePath = path.join(dataDir, 'pricing-database.json');
 const budgetsPath = path.join(dataDir, 'budgets.json');
@@ -1651,6 +1652,146 @@ function readSalesTreaters() {
   }
 }
 
+function normalizeSaleNumber(value) {
+  return String(value == null ? '' : value).trim().replace(/\.0$/, '');
+}
+
+function readFreightAgreements() {
+  if (!fs.existsSync(freightAgreementsPath)) return { version: 1, entries: {}, updatedAt: null };
+  try {
+    const value = JSON.parse(fs.readFileSync(freightAgreementsPath, 'utf8'));
+    return {
+      version: 1,
+      entries: value.entries && typeof value.entries === 'object' && !Array.isArray(value.entries) ? value.entries : {},
+      updatedAt: value.updatedAt || null
+    };
+  } catch (error) {
+    return { version: 1, entries: {}, updatedAt: null };
+  }
+}
+
+function treatedHeaderIndex(headers, aliases) {
+  const normalizedAliases = aliases.map(normalizeAdsText);
+  return headers.findIndex((header) => normalizedAliases.includes(normalizeAdsText(header)));
+}
+
+function treatedNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  let textValue = String(value == null ? '' : value).replace(/R\$/gi, '').replace(/\s/g, '');
+  if (textValue.includes(',')) textValue = textValue.replace(/\./g, '').replace(',', '.');
+  const parsed = Number(textValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function applyFreightAgreementsToRows(sourceRows) {
+  if (!Array.isArray(sourceRows) || sourceRows.length < 2 || !Array.isArray(sourceRows[0])) {
+    return { rows: sourceRows, summary: { adjustedOrders: 0, adjustedRows: 0, totalPaid: 0 } };
+  }
+  const rows = sourceRows.map((row) => Array.isArray(row) ? row.slice() : []);
+  const headers = rows[0];
+  let orderIndex = treatedHeaderIndex(headers, ['N.º de venda', 'Nº de venda', 'ID do pedido', 'Order ID', 'amazon-order-id', 'Número do pedido']);
+  if (orderIndex < 0) orderIndex = headers.findIndex((header) => {
+    const key = normalizeAdsText(header);
+    return (key.includes('de venda') && key.startsWith('n.')) || key.includes('numero de venda');
+  });
+  const freightIndex = treatedHeaderIndex(headers, ['Frete']);
+  const liquidIndex = treatedHeaderIndex(headers, ['Liquido', 'Líquido']);
+  const marginIndex = treatedHeaderIndex(headers, ['Gross margen', 'Gross margin', 'Margin R$', 'GM']);
+  const marginPercentIndex = treatedHeaderIndex(headers, ['Gross margen %', 'Gross margin %', 'Margin %', 'GM %']);
+  const revenueIndex = treatedHeaderIndex(headers, ['Faturamento', 'Fat']);
+  const statusIndex = treatedHeaderIndex(headers, ['Type.1', 'Status']);
+  if (orderIndex < 0 || freightIndex < 0) {
+    return { rows, summary: { adjustedOrders: 0, adjustedRows: 0, totalPaid: 0 } };
+  }
+
+  const agreements = readFreightAgreements().entries;
+  const groups = new Map();
+  rows.slice(1).forEach((row, offset) => {
+    const order = normalizeSaleNumber(row[orderIndex]);
+    const status = normalizeAdsText(statusIndex >= 0 ? row[statusIndex] : '');
+    if (!order || !Object.prototype.hasOwnProperty.call(agreements, order) || /cancel|devolu|reembolso|retorn/.test(status)) return;
+    if (!groups.has(order)) groups.set(order, []);
+    groups.get(order).push({ row, index: offset + 1 });
+  });
+
+  let adjustedRows = 0, totalPaid = 0;
+  groups.forEach((items, order) => {
+    const paid = Math.abs(Number(agreements[order] && agreements[order].value));
+    if (!Number.isFinite(paid) || paid === 0 || !items.length) return;
+    const weights = items.map((item) => Math.abs(treatedNumber(revenueIndex >= 0 ? item.row[revenueIndex] : 0)));
+    const weightTotal = weights.reduce((sum, value) => sum + value, 0);
+    let allocated = 0;
+    items.forEach((item, itemIndex) => {
+      const share = itemIndex === items.length - 1
+        ? paid - allocated
+        : paid * (weightTotal ? weights[itemIndex] / weightTotal : 1 / items.length);
+      allocated += share;
+      item.row[freightIndex] = treatedNumber(item.row[freightIndex]) - share;
+      if (liquidIndex >= 0) item.row[liquidIndex] = treatedNumber(item.row[liquidIndex]) - share;
+      if (marginIndex >= 0 && item.row[marginIndex] !== '') item.row[marginIndex] = treatedNumber(item.row[marginIndex]) - share;
+      if (marginPercentIndex >= 0 && marginIndex >= 0 && item.row[marginIndex] !== '') {
+        const revenue = revenueIndex >= 0 ? treatedNumber(item.row[revenueIndex]) : 0;
+        item.row[marginPercentIndex] = revenue ? treatedNumber(item.row[marginIndex]) / revenue : 0;
+      }
+      adjustedRows += 1;
+    });
+    totalPaid += paid;
+  });
+  return {
+    rows,
+    summary: {
+      adjustedOrders: groups.size,
+      adjustedRows,
+      totalPaid: Math.round(totalPaid * 100) / 100
+    }
+  };
+}
+
+async function handleFreightAgreementsUpdate(request, response) {
+  if (!requireAdmin(request, response)) return;
+  try {
+    const payload = await collectJsonRequest(request, 8 * 1024 * 1024);
+    const state = readFreightAgreements();
+    if (payload.action === 'import') {
+      const incoming = Array.isArray(payload.entries) ? payload.entries : [];
+      if (!incoming.length) return sendJson(response, 400, { error: 'Nenhum frete válido foi encontrado.' });
+      const nextEntries = payload.replace === true ? {} : { ...state.entries };
+      incoming.forEach((entry) => {
+        const saleNumber = normalizeSaleNumber(entry.saleNumber);
+        const amount = Math.abs(Number(entry.value));
+        if (!saleNumber || !Number.isFinite(amount)) return;
+        nextEntries[saleNumber] = {
+          value: Math.round(amount * 100) / 100,
+          sourceFile: String(payload.sourceFile || '').trim().slice(0, 260),
+          importedAt: new Date().toISOString()
+        };
+      });
+      state.entries = nextEntries;
+    } else if (payload.action === 'delete') {
+      delete state.entries[normalizeSaleNumber(payload.saleNumber)];
+    } else if (payload.action === 'clear') {
+      state.entries = {};
+    } else {
+      return sendJson(response, 400, { error: 'Ação inválida para Frete a Combinar.' });
+    }
+    state.updatedAt = new Date().toISOString();
+    writeJsonWithRetry(freightAgreementsPath, state);
+    sendJson(response, 200, state);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'Arquivo inválido.' : error.message });
+  }
+}
+
+async function handleApplyFreightAgreements(request, response) {
+  try {
+    const payload = await collectJsonRequest(request, maxUploadBytes);
+    const result = applyFreightAgreementsToRows(payload.rows);
+    sendJson(response, 200, result);
+  } catch (error) {
+    sendJson(response, 400, { error: error.message === 'INVALID_JSON' ? 'Linhas tratadas inválidas.' : error.message });
+  }
+}
+
 async function handleSalesTreatersUpdate(request, response) {
   try {
     const payload = await collectJsonRequest(request, maxUploadBytes);
@@ -1703,11 +1844,12 @@ async function handleSalesTreatersUpdate(request, response) {
       };
       const existingIndex = history.findIndex((item) => String(item.month) === month && Number(item.year) === resolvedYear);
       const treatedRows = Array.isArray(payload.rows) ? payload.rows : [];
+      const sourceRows = Array.isArray(payload.sourceRows) && payload.sourceRows.length > 1 ? payload.sourceRows : treatedRows;
       if (treatedRows.length > 1 && Array.isArray(treatedRows[0])) {
         const treatedName = 'sales-treatment-' + channel.id + '-' + resolvedYear + '-' + month + '.json';
         const treatedPath = resolveDataFilePath(treatedName);
         if (!treatedPath) return sendJson(response, 400, { error: 'Destino invalido para o arquivo tratado.' });
-        writeJsonWithRetry(treatedPath, { version: 1, channelId: channel.id, month, year: resolvedYear, rows: treatedRows, savedAt: record.uploadedAt });
+        writeJsonWithRetry(treatedPath, { version: 2, channelId: channel.id, month, year: resolvedYear, sourceRows, rows: treatedRows, savedAt: record.uploadedAt });
         record.storedName = treatedName;
       } else if (existingIndex >= 0 && history[existingIndex].storedName) {
         record.storedName = history[existingIndex].storedName;
@@ -1742,7 +1884,8 @@ function handleSalesTreatedRows(request, response) {
     const storedPath = record && record.storedName ? resolveDataFilePath(record.storedName) : '';
     if (!storedPath || !fs.existsSync(storedPath)) return sendJson(response, 404, { error: 'Os dados deste mes precisam ser tratados novamente.' });
     const value = JSON.parse(fs.readFileSync(storedPath, 'utf8'));
-    const rows = Array.isArray(value.rows) ? value.rows : [];
+    const wantsSource = url.searchParams.get('source') === '1';
+    const rows = wantsSource && Array.isArray(value.sourceRows) ? value.sourceRows : (Array.isArray(value.rows) ? value.rows : []);
     if (rows.length < 2) return sendJson(response, 404, { error: 'O tratamento mensal salvo esta vazio.' });
     sendJson(response, 200, { month, year, rows, savedAt: value.savedAt || record.uploadedAt || null });
   } catch (error) {
@@ -1767,6 +1910,7 @@ async function handleRefreshAllPublishedBases(request, response) {
     fs.mkdirSync(backupDir, { recursive: true });
     fs.copyFileSync(metadataPath, path.join(backupDir, 'metadata.json'));
     if (fs.existsSync(salesTreatersPath)) fs.copyFileSync(salesTreatersPath, path.join(backupDir, 'sales-treaters.json'));
+    if (fs.existsSync(freightAgreementsPath)) fs.copyFileSync(freightAgreementsPath, path.join(backupDir, 'freight-agreements.json'));
 
     const refreshed = [];
     for (const [month, monthMetadata] of monthEntries) {
@@ -1814,6 +1958,7 @@ async function handleClearPublishedSalesBases(request, response) {
     const backupDir = path.join(dataDir, 'base-replacement-backups', stamp);
     fs.mkdirSync(backupDir, { recursive: true });
     if (fs.existsSync(metadataPath)) fs.copyFileSync(metadataPath, path.join(backupDir, 'metadata.json'));
+    if (fs.existsSync(freightAgreementsPath)) fs.copyFileSync(freightAgreementsPath, path.join(backupDir, 'freight-agreements.json'));
     let removedFiles = 0;
     monthEntries.forEach(([, item]) => {
       [item && item.storedName, item && item.rowsName].filter(Boolean).forEach((name) => {
@@ -4173,6 +4318,21 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'GET' && requestPath === '/api/sales-treaters/treated-rows') {
     handleSalesTreatedRows(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/freight-agreements') {
+    sendJson(response, 200, readFreightAgreements());
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/freight-agreements') {
+    handleFreightAgreementsUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/freight-agreements/apply') {
+    handleApplyFreightAgreements(request, response);
     return;
   }
 
