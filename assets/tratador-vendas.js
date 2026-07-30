@@ -5,6 +5,7 @@
   var state = { channels: [] };
   var preparedRows = {};
   var months = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  var publishHeaders = ['Marketplace','Marketplace venda','N.º de venda','Data da venda','Data','Estado','Type.1','Forma de entrega','# de anúncio','Título do anúncio','SKU','Preço unitário de venda do anúncio (BRL)','Unidades','Faturamento','Desconto','rebate','Comissão','Frete','Cancelamento','Liquido','Antecipa','Imposto','Custo do produto','Gross margen','Gross margen %','Id mercado Pago'];
 
   function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; }); }
   function norm(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase(); }
@@ -177,20 +178,90 @@
 
   async function save(payload) { var response = await fetch('/api/sales-treaters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); var result=await response.json(); if(!response.ok) throw new Error(result.error||'Não foi possível salvar.'); state=result; render(); }
   async function recordTreatment(payload) { var response=await fetch('/api/sales-treaters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel registrar o tratamento.');state=result;return result; }
+  function repriceTreatedRows(rows,costMap){
+    if(!Array.isArray(rows)||rows.length<2)return rows;
+    var headers=rows[0]||[];
+    var skuIndex=find(headers,['Número de referência SKU','Numero de referencia SKU','SKU']);
+    var quantityIndex=find(headers,['Quantidade','Unidades']);
+    var costIndex=find(headers,['Custo do produto','CMV']);
+    var gmIndex=find(headers,['Gross margen','Gross margin','GM']);
+    var gmPercentIndex=find(headers,['Gross margen %','Gross margin %','GM %']);
+    var liquidIndex=find(headers,['Liquido','Líquido']);
+    var taxIndex=find(headers,['Imposto']);
+    var revenueIndex=find(headers,['Faturamento']);
+    var statusIndex=find(headers,['Type.1','Status','Status do pedido','Estado']);
+    if(skuIndex<0||quantityIndex<0||costIndex<0)return rows;
+    return [headers].concat(rows.slice(1).map(function(sourceRow){
+      var row=sourceRow.slice(),sku=String(row[skuIndex]||'').trim(),status=norm(statusIndex>=0?row[statusIndex]:'');
+      var inactive=/cancel|devolu|devolv|reembolso|retorn/.test(status);
+      var hasCost=Object.prototype.hasOwnProperty.call(costMap,sku)&&Number.isFinite(Number(costMap[sku]));
+      row[costIndex]=inactive?0:(hasCost?-Math.abs(Number(costMap[sku]))*Math.abs(num(row[quantityIndex])):'');
+      if(gmIndex>=0)row[gmIndex]=row[costIndex]===''?'':num(liquidIndex>=0?row[liquidIndex]:0)+num(taxIndex>=0?row[taxIndex]:0)+num(row[costIndex]);
+      if(gmPercentIndex>=0){
+        var revenue=revenueIndex>=0?num(row[revenueIndex]):0;
+        row[gmPercentIndex]=row[gmIndex]===''||!revenue?'':num(row[gmIndex])/revenue;
+      }
+      return row;
+    }));
+  }
+  function appendCompatibleRows(target,rows){
+    if(!rows||rows.length<2)return target;
+    if(!target.length)target=[publishHeaders.slice()];
+    var targetHeaders=target[0],sourceIndexes={};
+    (rows[0]||[]).forEach(function(header,index){sourceIndexes[norm(header)]=index;});
+    var aliases={
+      'n.º de venda':['id do pedido'],
+      'data da venda':['data completa'],
+      'estado':['status do pedido'],
+      'type.1':['status'],
+      'forma de entrega':['opcao de envio'],
+      '# de anuncio':['id do produto'],
+      'titulo do anuncio':['nome do produto'],
+      'sku':['numero de referencia sku'],
+      'preco unitario de venda do anuncio (brl)':['preco acordado'],
+      'unidades':['quantidade'],
+      'gross margen':['gross margin'],
+      'gross margen %':['gross margin %']
+    };
+    rows.slice(1).forEach(function(row){
+      target.push(targetHeaders.map(function(header){
+        var key=norm(header),index=sourceIndexes[key];
+        if(index==null)(aliases[key]||[]).some(function(alias){index=sourceIndexes[norm(alias)];return index!=null;});
+        return index==null?'':row[index];
+      }));
+    });
+    return target;
+  }
   async function refreshAllPublishedBases(button,status){
-    if(!confirm('Atualizar todas as bases mensais ja publicadas? Um backup automatico sera criado antes da operacao.'))return;
+    if(!confirm('Retratar e republicar todos os meses de todas as contas? O CMV e a margem serao recalculados com o cadastro de custos atual.'))return;
     var password=prompt('Informe a senha administrativa para atualizar todas as bases:');
     if(password===null)return;
     if(!password)return alert('Informe a senha administrativa.');
     var original=button.textContent;
     try{
-      button.disabled=true;button.textContent='Atualizando...';status.textContent='Criando backup e atualizando todas as bases publicadas...';
-      var response=await fetch('/api/sales-treaters/refresh-all',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({confirm:true})});
-      var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel atualizar as bases.');
-      var updated=(result.refreshed||[]).filter(function(item){return item.status==='updated';});
-      var rows=updated.reduce(function(total,item){return total+Number(item.rows||0);},0);
-      status.textContent=updated.length+' mes(es) atualizado(s), '+rows.toLocaleString('pt-BR')+' linhas preservadas. Backup: '+result.backup+'.';
-      alert('Atualizacao concluida. '+updated.length+' mes(es) e '+rows.toLocaleString('pt-BR')+' linhas foram preservados e republicados.');
+      button.disabled=true;button.textContent='Retratando...';status.textContent='Recuperando todos os meses tratados e recalculando o CMV...';
+      var costMap=await costs(),combined=[],updatedMonths=0,updatedRows=0;
+      for(var channelIndex=0;channelIndex<state.channels.length;channelIndex+=1){
+        var channel=state.channels[channelIndex],records=(channel.treatmentHistory||[]).filter(function(item){return item.storedName;});
+        for(var recordIndex=0;recordIndex<records.length;recordIndex+=1){
+          var item=records[recordIndex];
+          status.textContent='Retratando '+channel.channelName+' · '+months[Number(item.month)-1]+'/'+item.year+'...';
+          var response=await fetch('/api/sales-treaters/treated-rows?id='+encodeURIComponent(channel.id)+'&month='+encodeURIComponent(item.month)+'&year='+encodeURIComponent(item.year),{cache:'no-store'});
+          var result=await response.json();if(!response.ok)throw new Error(result.error||'Nao foi possivel recuperar o tratamento mensal.');
+          var repriced=repriceTreatedRows(result.rows,costMap),range=treatmentRange(repriced);
+          await recordTreatment({action:'record-treatment',id:channel.id,month:item.month,year:item.year,rowCount:repriced.length-1,firstDate:range.firstDate,lastDate:range.lastDate,sourceFile:item.sourceFile||'',missingCostSkus:item.missingCostSkus||0,rows:repriced});
+          combined=appendCompatibleRows(combined,repriced);updatedMonths+=1;updatedRows+=Math.max(0,repriced.length-1);
+        }
+      }
+      if(combined.length<2)throw new Error('Nenhum mes tratado com arquivo salvo foi encontrado.');
+      if(!window.salesBaseIntegration)throw new Error('A integracao da Base de Vendas nao esta disponivel.');
+      status.textContent='Gerando a base consolidada de todas as contas...';
+      await window.salesBaseIntegration.prepareTreatedRows(combined,'Retratamento completo · '+updatedMonths+' meses');
+      status.textContent='Publicando todos os meses e todas as contas...';
+      var published=await window.salesBaseIntegration.publishPrepared(password,false);
+      if(published===false)throw new Error('Nao foi possivel concluir a publicacao das bases.');
+      status.textContent=updatedMonths+' tratamento(s), '+updatedRows.toLocaleString('pt-BR')+' vendas recalculadas e republicadas com o CMV atual.';
+      alert('Atualizacao concluida. Todas as contas foram mantidas e o CMV foi recalculado em '+updatedMonths+' tratamento(s).');
     }catch(error){status.textContent=error.message;alert(error.message);}finally{button.disabled=false;button.textContent=original;}
   }
   function formatDateBr(value){var match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return match?match[3]+'/'+match[2]+'/'+match[1]:'—';}

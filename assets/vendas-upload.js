@@ -322,8 +322,10 @@
       renderMonthTabs();
       renderLastUpdate(dashboardState.monthMetadata[lastMonth]);
       setStatus('Publicação concluída', monthKeys.length + ' meses atualizados sem duplicação. A Base de Dados e os painéis já podem ler os novos valores.', 'success');
+      return true;
     } catch (error) {
       setStatus('Não foi possível publicar', error.message || 'Erro durante a integração.', 'error');
+      return false;
     } finally {
       previewButton.disabled = false;
       publishButton.disabled = false;
@@ -423,7 +425,7 @@
       renderPreview(integrationPreview);
       return integrationPreview;
     },
-    publishPrepared: function (password) { return publishIntegration(password, true); },
+    publishPrepared: function (password, mergeChannel) { return publishIntegration(password, mergeChannel); },
     hasPreparedData: function () { return !!integrationPreview; }
   };
 })();
