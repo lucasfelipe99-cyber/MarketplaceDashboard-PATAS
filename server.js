@@ -1666,6 +1666,58 @@ async function handleSalesTreatersUpdate(request, response) {
   }
 }
 
+async function handleRefreshAllPublishedBases(request, response) {
+  if (!requireAdmin(request, response)) return;
+  try {
+    const payload = await collectJsonRequest(request, 64 * 1024);
+    if (payload.confirm !== true) return sendJson(response, 400, { error: 'Confirme a atualizacao de todas as bases.' });
+
+    const metadata = readMetadata();
+    const monthEntries = Object.entries(metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {})
+      .filter(([, month]) => month && month.storedName && month.rowsName)
+      .sort((a, b) => Number(a[0]) - Number(b[0]));
+    if (!monthEntries.length) return sendJson(response, 400, { error: 'Nenhuma base mensal publicada foi encontrada.' });
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupDir = path.join(dataDir, 'base-refresh-backups', stamp);
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(metadataPath, path.join(backupDir, 'metadata.json'));
+    if (fs.existsSync(salesTreatersPath)) fs.copyFileSync(salesTreatersPath, path.join(backupDir, 'sales-treaters.json'));
+
+    const refreshed = [];
+    for (const [month, monthMetadata] of monthEntries) {
+      const basePath = resolveDataFilePath(monthMetadata.storedName);
+      const rowsPath = resolveDataFilePath(monthMetadata.rowsName);
+      if (!fs.existsSync(basePath) || !fs.existsSync(rowsPath)) {
+        refreshed.push({ month, status: 'ignored', reason: 'Arquivo mensal incompleto.' });
+        continue;
+      }
+      fs.copyFileSync(basePath, path.join(backupDir, path.basename(basePath)));
+      fs.copyFileSync(rowsPath, path.join(backupDir, path.basename(rowsPath)));
+      applyProductCategoriesToRowsFile(rowsPath);
+      const rows = readPublishedRows(monthMetadata);
+      monthMetadata.rowsUpdatedAt = new Date().toISOString();
+      monthMetadata.bulkRefreshedAt = monthMetadata.rowsUpdatedAt;
+      refreshed.push({ month, status: 'updated', rows: Math.max(0, rows.length - 1) });
+    }
+
+    metadata.areas.area1.lastBulkRefreshAt = new Date().toISOString();
+    metadata.areas.area1.lastBulkRefreshMonths = refreshed.filter((item) => item.status === 'updated').map((item) => item.month);
+    writeJsonWithRetry(metadataPath, metadata);
+    setImmediate(() => {
+      ensureIntelligentAnalysis(true).catch((error) => console.error('Nao foi possivel atualizar a Analise Inteligente apos a atualizacao geral:', error.message));
+    });
+    sendJson(response, 200, {
+      updatedAt: metadata.areas.area1.lastBulkRefreshAt,
+      backup: path.relative(dataDir, backupDir).replace(/\\/g, '/'),
+      refreshed
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar todas as bases:', error);
+    sendJson(response, 500, { error: 'Nao foi possivel atualizar todas as bases: ' + error.message });
+  }
+}
+
 function readMagaluIds() {
   const filePath = path.join(__dirname, 'lib', 'magalu-ids.csv');
   if (!fs.existsSync(filePath)) return {};
@@ -3949,6 +4001,11 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestPath === '/api/sales-treaters') {
     handleSalesTreatersUpdate(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/sales-treaters/refresh-all') {
+    handleRefreshAllPublishedBases(request, response);
     return;
   }
 

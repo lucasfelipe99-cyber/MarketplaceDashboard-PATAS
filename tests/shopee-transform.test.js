@@ -37,4 +37,25 @@ assert.ok(Math.abs(result.rows[0][16] - -19.2) < 1e-9, 'Comissão deve ser ratea
 assert.ok(Math.abs(result.rows[1][16] - -4.8) < 1e-9, 'Comissão deve reconciliar no pedido');
 assert.strictEqual(result.rows[0][4], '2026-07-01');
 
+const inactiveRows = [
+  ['C1', 'Cancelado', '', '-', '2026-07-02 09:00', 'Shopee Xpress', 'Produto cancelado', 'GA954-1', 60, 1, 60, 0, 0, 0, 0, 0, 0, 0, 0, -9, 10, 2],
+  ['D1', 'Concluído', 'Devolução aprovada', '2026-07-03 10:00', '2026-07-03 09:00', 'Shopee Xpress', 'Produto devolvido', 'GA954-1', 60, 1, 60, 0, 0, 0, 0, 0, 0, 0, 0, -9, 10, 2]
+];
+const inactiveResult = transformShopee({ headers, rows: inactiveRows, channelName: 'Box fan', taxRate: 14, anticipationRate: 2.5, freight: -7 }, {
+  costs: { GA954: { productCost: 10 } }
+});
+const cancelled = inactiveResult.rows[0], returned = inactiveResult.rows[1];
+assert.strictEqual(cancelled[6], 'Cancelado');
+assert.strictEqual(cancelled[16], 0, 'Cancelado não deve ter comissão');
+assert.strictEqual(cancelled[17], 0, 'Cancelado não deve ter frete normal');
+assert.strictEqual(cancelled[21], 0, 'Cancelado não deve ter imposto');
+assert.strictEqual(cancelled[22], 0, 'Cancelado não deve ter CMV');
+assert.strictEqual(returned[6], 'Devolução');
+assert.strictEqual(returned[16], 0, 'Devolução não deve ter comissão');
+assert.strictEqual(returned[17], 0, 'Devolução não deve ter frete normal');
+assert.strictEqual(returned[18], -9, 'Devolução deve preservar apenas o frete reverso');
+assert.strictEqual(returned[19], -9, 'Frete reverso deve compor o líquido da devolução');
+assert.strictEqual(returned[21], 0, 'Devolução não deve ter imposto');
+assert.strictEqual(returned[22], 0, 'Devolução não deve ter CMV');
+
 console.log('Shopee transform tests: PASS');
