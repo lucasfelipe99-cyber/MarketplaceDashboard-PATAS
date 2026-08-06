@@ -310,6 +310,41 @@
     return selectedFinancialCompany ? records.filter(function (record) { return record.companyId === selectedFinancialCompany; }) : records;
   }
 
+  function clearSelectedCompanyCashFlow() {
+    if (!selectedFinancialCompany) {
+      alert('Selecione uma empresa antes de limpar os lançamentos.');
+      return;
+    }
+    var company = financialCompanies.find(function (item) { return item.id === selectedFinancialCompany; });
+    var companyName = company ? company.name : 'empresa selecionada';
+    var recordsToRemove = cashFlowState.records.filter(function (record) { return record.companyId === selectedFinancialCompany; });
+    if (!recordsToRemove.length) {
+      alert('Não há lançamentos de ' + companyName + ' para limpar.');
+      return;
+    }
+    var confirmed = confirm(
+      'Tem certeza que deseja excluir todos os ' + recordsToRemove.length.toLocaleString('pt-BR') +
+      ' lançamentos de ' + companyName + '?\n\nEsta ação não pode ser desfeita.'
+    );
+    if (!confirmed) return;
+
+    cashFlowState.records = cashFlowState.records.filter(function (record) {
+      return record.companyId !== selectedFinancialCompany;
+    });
+    cashFlowState.preview = null;
+    if (!cashFlowState.records.length) {
+      cashFlowState.fileName = '';
+      cashFlowState.importedAt = '';
+    }
+    rebuildCashSummaryFromRecords();
+    saveClosingState();
+    renderCashFlow();
+    renderSummary();
+    renderDre();
+    renderBudget();
+    alert(recordsToRemove.length.toLocaleString('pt-BR') + ' lançamentos de ' + companyName + ' foram excluídos.');
+  }
+
   function kpis(items) {
     return '<div class="closing-kpis">' + items.map(function (item) {
       return '<article class="closing-kpi"><span>' + item[0] + '</span><strong class="' + numberClass(item[1]) + '">' + money(item[1]) + '</strong></article>';
@@ -367,9 +402,11 @@
       hierarchyYear + ' · classificação → categoria → lançamento</span></div><div class="closing-table-wrap"><table class="closing-table cash-hierarchy-table"><thead><tr><th>Classificação / Categoria / Lançamento</th>' +
       activeMonths.map(function (month) { return '<th>' + months[month - 1] + '</th>'; }).join('') +
       '<th>TOTAL</th></tr></thead><tbody>' + buildCashSummaryHierarchy(hierarchyRecords, activeMonths) + '</tbody></table></div></div>' : '';
+    var clearButton = '<button class="closing-button danger" id="clearCompanyCashFlowButton" type="button"' +
+      (!selectedFinancialCompany || !records.length ? ' disabled' : '') + '>Limpar lançamentos da empresa</button>';
     container.innerHTML = '<div class="closing-shell">' +
       head('Base — Fluxo de Caixa', 'Importação, validação e consulta dos lançamentos financeiros.',
-        financialCompanyControl('cashFlowCompany') + '<label class="closing-button primary" for="cashFlowFileInput">Importar fluxo de caixa</label><input class="closing-input" id="cashFlowFileInput" type="file" accept=".xlsx,.xls,.csv" aria-label="Selecionar arquivo do fluxo de caixa">') +
+        financialCompanyControl('cashFlowCompany') + clearButton + '<label class="closing-button primary" for="cashFlowFileInput">Importar fluxo de caixa</label><input class="closing-input" id="cashFlowFileInput" type="file" accept=".xlsx,.xls,.csv" aria-label="Selecionar arquivo do fluxo de caixa">') +
       kpis([['Entradas do período', entries], ['Saídas do período', exits], ['Saldo do período', balance], ['Saldo acumulado', balance]]) +
       '<div id="cashImportPreview"></div>' +
       hierarchy + (records.length ? cashFlowTable(records) : emptyCashFlowTable()) + '</div>';
@@ -379,6 +416,8 @@
     }
     var companySelect = document.getElementById('cashFlowCompany');
     if (companySelect) companySelect.addEventListener('change', function () { selectedFinancialCompany = this.value; refreshSalesRevenueFromDashboardUploads().then(function () { renderCashFlow(); renderSummary(); renderDre(); }); });
+    var clearButtonElement = document.getElementById('clearCompanyCashFlowButton');
+    if (clearButtonElement) clearButtonElement.addEventListener('click', clearSelectedCompanyCashFlow);
     bindCashExpandButtons(container);
   }
 
