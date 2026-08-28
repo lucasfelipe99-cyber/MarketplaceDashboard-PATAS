@@ -1468,6 +1468,7 @@ function synchronizeAdsChannels(state) {
   const renamedKeys = new Map();
   let linkedUploads = 0;
   let renamedUploads = 0;
+  let restoredChannels = 0;
   state.uploads.forEach((item) => {
     const oldKey = adsChannelKey(item.platform, item.account);
     const canonical = (item.salesChannelId && byId.get(String(item.salesChannelId))) || byKey.get(oldKey);
@@ -1489,6 +1490,11 @@ function synchronizeAdsChannels(state) {
     item.platform = canonical.marketplace;
     item.account = canonical.account;
     if (canonical.channelId) item.salesChannelId = canonical.channelId;
+  });
+  state.excludedChannels = state.excludedChannels.filter((item) => {
+    const isRegistered = (item.salesChannelId && byId.has(String(item.salesChannelId))) || byKey.has(adsChannelKey(item.platform, item.account));
+    if (isRegistered) restoredChannels += 1;
+    return !isRegistered;
   });
 
   let renamedRows = 0;
@@ -1533,7 +1539,7 @@ function synchronizeAdsChannels(state) {
   });
   state.updatedAt = new Date().toISOString();
   writeJsonWithRetry(adsUploadHistoryPath, state);
-  return { accounts: canonicalAccounts.length, linkedUploads, renamedUploads, renamedRows };
+  return { accounts: canonicalAccounts.length, linkedUploads, renamedUploads, renamedRows, restoredChannels };
 }
 
 function deleteAdsChannelData(platform, account, state) {

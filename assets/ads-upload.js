@@ -304,7 +304,7 @@
       if(!response.ok)throw new Error(result.error||'Não foi possível sincronizar os tratadores.');
       registeredAccounts=Array.isArray(result.accounts)?result.accounts:[];uploadHistory=result.uploads||[];excludedChannels=result.excludedChannels||[];
       refreshAccountOptions();renderHistory();
-      alert('Tratadores recarregados. '+Number(result.synchronized.accounts||0)+' conta(s) vinculada(s) pelo mesmo nome e plataforma.');
+      alert('Tratadores recarregados. '+Number(result.synchronized.accounts||0)+' conta(s) vinculada(s) pelo mesmo nome e plataforma. '+Number(result.synchronized.restoredChannels||0)+' canal(is) reativado(s) no ADS.');
     }catch(error){historySummary.textContent=error.message;alert(error.message);}finally{button.disabled=false;button.textContent='↻ Recarregar tratadores';}
   };
   document.getElementById('adsUploadRead').onclick = async function () {
