@@ -1442,13 +1442,119 @@ async function handleAdsBaseUpload(request, response) {
 }
 
 function readAdsUploadHistory() {
-  if (!fs.existsSync(adsUploadHistoryPath)) return { version: 1, uploads: [], counters: {}, updatedAt: null };
+  if (!fs.existsSync(adsUploadHistoryPath)) return { version: 2, uploads: [], counters: {}, excludedChannels: [], updatedAt: null };
   try {
     const state = JSON.parse(fs.readFileSync(adsUploadHistoryPath, 'utf8'));
-    return { version: 1, uploads: Array.isArray(state.uploads) ? state.uploads : [], counters: state.counters && typeof state.counters === 'object' ? state.counters : {}, updatedAt: state.updatedAt || null };
+    return {
+      version: 2,
+      uploads: Array.isArray(state.uploads) ? state.uploads : [],
+      counters: state.counters && typeof state.counters === 'object' ? state.counters : {},
+      excludedChannels: Array.isArray(state.excludedChannels) ? state.excludedChannels : [],
+      updatedAt: state.updatedAt || null
+    };
   } catch (error) {
-    return { version: 1, uploads: [], counters: {}, updatedAt: null };
+    return { version: 2, uploads: [], counters: {}, excludedChannels: [], updatedAt: null };
   }
+}
+
+function adsChannelKey(platform, account) {
+  return normalizeAdsText(platform) + '||' + normalizeAdsText(account);
+}
+
+function deleteAdsChannelData(platform, account, state) {
+  const channelKey = adsChannelKey(platform, account);
+  const now = new Date().toISOString();
+  const stamp = now.replace(/[:.]/g, '-');
+  const safeChannel = (normalizeAdsText(platform + '-' + account).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'canal').slice(0, 80);
+  const backupDir = path.join(dataDir, 'ads-channel-delete-backups', `${stamp}-${safeChannel}`);
+  const rawBackupDir = path.join(backupDir, 'raw');
+  const treatedBackupDir = path.join(backupDir, 'treated');
+  fs.mkdirSync(rawBackupDir, { recursive: true });
+  fs.mkdirSync(treatedBackupDir, { recursive: true });
+  if (fs.existsSync(adsUploadHistoryPath)) fs.copyFileSync(adsUploadHistoryPath, path.join(backupDir, 'ads-upload-history.json'));
+
+  const removedUploads = state.uploads.filter((item) => adsChannelKey(item.platform, item.account) === channelKey);
+  removedUploads.forEach((item) => {
+    const storedName = path.basename(String(item.storedName || ''));
+    const treatedName = path.basename(String(item.treatedName || ''));
+    if (storedName) {
+      const filePath = path.join(adsUploadFilesDir, storedName);
+      if (fs.existsSync(filePath)) fs.copyFileSync(filePath, path.join(rawBackupDir, storedName));
+    }
+    if (treatedName) {
+      const filePath = path.join(adsTreatedFilesDir, treatedName);
+      if (fs.existsSync(filePath)) fs.copyFileSync(filePath, path.join(treatedBackupDir, treatedName));
+    }
+  });
+
+  const metadata = readMetadata();
+  const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+  const backedUpRows = new Set();
+  let removedRows = 0;
+  const affectedMonths = [];
+  Object.entries(months).forEach(([month, monthMetadata]) => {
+    if (!monthMetadata || !monthMetadata.rowsName) return;
+    const rowsPath = resolveDataFilePath(monthMetadata.rowsName);
+    if (!rowsPath || !fs.existsSync(rowsPath)) return;
+    const saved = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+    const rows = Array.isArray(saved.rows) ? saved.rows : [];
+    if (rows.length < 2 || !Array.isArray(rows[0])) return;
+    const header = rows[0];
+    const normalizedHeader = header.map(normalizeAdsText);
+    const locate = (aliases) => normalizedHeader.findIndex((name) => aliases.includes(name));
+    const indexes = {
+      marketplace: locate(['marketplace']), sale: locate(['marketplace venda']),
+      category: locate(['categoria']), subcategory: locate(['sub categoria', 'subcategoria'])
+    };
+    if (Object.values(indexes).some((index) => index < 0)) return;
+    const kept = rows.slice(1).filter((row) => {
+      const matchesChannel = adsChannelKey(row[indexes.marketplace], row[indexes.sale]) === channelKey;
+      const remove = matchesChannel && isAdsMetricRow(row, indexes);
+      if (remove) removedRows += 1;
+      return !remove;
+    });
+    if (kept.length === rows.length - 1) return;
+    const rowsName = path.basename(rowsPath);
+    if (!backedUpRows.has(rowsPath)) {
+      fs.copyFileSync(rowsPath, path.join(backupDir, rowsName));
+      backedUpRows.add(rowsPath);
+    }
+    saved.rows = [header].concat(kept);
+    writeJsonWithRetry(rowsPath, saved);
+    monthMetadata.rowsUpdatedAt = now;
+    affectedMonths.push(String(month));
+  });
+
+  state.uploads = state.uploads.filter((item) => adsChannelKey(item.platform, item.account) !== channelKey);
+  Object.keys(state.counters).forEach((key) => {
+    const parts = key.split('||');
+    if (adsChannelKey(parts[0], parts[1]) === channelKey) delete state.counters[key];
+  });
+  if (!state.excludedChannels.some((item) => adsChannelKey(item.platform, item.account) === channelKey)) {
+    state.excludedChannels.push({ platform, account, excludedAt: now });
+  }
+  state.updatedAt = now;
+  writeJsonWithRetry(adsUploadHistoryPath, state);
+  writeJsonWithRetry(metadataPath, metadata);
+
+  removedUploads.forEach((item) => {
+    const storedName = path.basename(String(item.storedName || ''));
+    const treatedName = path.basename(String(item.treatedName || ''));
+    if (storedName) {
+      const filePath = path.join(adsUploadFilesDir, storedName);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+    if (treatedName) {
+      const filePath = path.join(adsTreatedFilesDir, treatedName);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+  });
+  return {
+    removedUploads: removedUploads.length,
+    removedRows,
+    affectedMonths,
+    backup: path.relative(dataDir, backupDir).replace(/\\/g, '/')
+  };
 }
 
 function publicAdsUpload(item) {
@@ -1464,7 +1570,7 @@ function publicAdsUpload(item) {
 async function handleAdsTreaterUploads(request, response) {
   if (request.method === 'GET') {
     const state = readAdsUploadHistory();
-    sendJson(response, 200, { uploads: state.uploads.map(publicAdsUpload), updatedAt: state.updatedAt });
+    sendJson(response, 200, { uploads: state.uploads.map(publicAdsUpload), excludedChannels: state.excludedChannels, updatedAt: state.updatedAt });
     return;
   }
   if (!requireAdmin(request, response)) return;
@@ -1472,6 +1578,19 @@ async function handleAdsTreaterUploads(request, response) {
     const payload = await collectJsonRequest(request, maxUploadBytes);
     const action = String(payload.action || 'add');
     const state = readAdsUploadHistory();
+    if (action === 'delete-channel') {
+      const platform = String(payload.platform || '').trim();
+      const account = String(payload.account || '').trim();
+      if (!platform || !account) return sendJson(response, 400, { error: 'Informe a plataforma e a conta que serão excluídas do ADS.' });
+      const deleted = deleteAdsChannelData(platform, account, state);
+      sendJson(response, 200, {
+        deleted,
+        uploads: state.uploads.map(publicAdsUpload),
+        excludedChannels: state.excludedChannels
+      });
+      setImmediate(() => ensureIntelligentAnalysis(true).catch(() => {}));
+      return;
+    }
     if (action === 'delete') {
       const index = state.uploads.findIndex((item) => item.id === String(payload.id || ''));
       if (index < 0) return sendJson(response, 404, { error: 'Subida de ADS não encontrada.' });

@@ -282,13 +282,15 @@
 .ads-account-card>header { display:flex; align-items:center; justify-content:space-between; gap:24px; padding-bottom:14px; border-bottom:1px solid var(--border); }
 .ads-account-card>header span { display:block; color:var(--accent); font-size:.67rem; font-weight:900; text-transform:uppercase; }
 .ads-account-card>header h3 { margin:5px 0 0; font-size:1.15rem; }
-.ads-account-controls { display:grid; grid-template-columns:105px minmax(270px,1fr) minmax(190px,auto) minmax(285px,auto); gap:10px; align-items:end; flex:1; max-width:1120px; }
+.ads-account-controls { display:grid; grid-template-columns:105px minmax(250px,1fr) minmax(180px,auto) minmax(260px,auto) minmax(125px,auto); gap:10px; align-items:end; flex:1; max-width:1280px; }
 .ads-account-controls label { display:grid; gap:5px; color:var(--text-muted); font-size:.65rem; font-weight:850; text-transform:uppercase; }
 .ads-account-controls input,.ads-account-controls select { min-width:0; border:1px solid var(--border); border-radius:9px; background:var(--surface); color:var(--text); padding:9px; }
 .ads-account-controls button { min-height:43px; border:0; border-radius:10px; background:linear-gradient(135deg,#4f8cff,#3977ec); color:#fff; padding:10px 18px; font-weight:900; line-height:1.15; white-space:nowrap; cursor:pointer; box-shadow:0 7px 18px rgba(47,112,235,.2); transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease; }
 .ads-account-controls button:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 10px 24px rgba(47,112,235,.3); }
 .ads-account-controls [data-republish-selected] { min-width:285px; border:1px solid rgba(79,140,255,.55); background:linear-gradient(135deg,rgba(79,140,255,.18),rgba(40,199,184,.13)); color:#79a9ff; box-shadow:none; }
 .ads-account-controls [data-republish-selected]:hover:not(:disabled) { border-color:var(--accent); background:linear-gradient(135deg,rgba(79,140,255,.3),rgba(40,199,184,.22)); box-shadow:0 8px 22px rgba(0,0,0,.15); }
+.ads-account-controls .ads-delete-channel { border:1px solid rgba(255,83,112,.75); background:rgba(255,83,112,.1); color:#ff718a; box-shadow:none; }
+.ads-account-controls .ads-delete-channel:hover:not(:disabled) { border-color:#ff5370; background:rgba(255,83,112,.2); box-shadow:0 8px 22px rgba(255,83,112,.12); }
 .ads-account-controls button:disabled { opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
 .ads-card-file input { min-height:43px; padding:6px 8px; }
 .ads-account-meta { color:var(--text-muted); font-size:.74rem; padding:12px 0; }

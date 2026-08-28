@@ -33,6 +33,7 @@
   var historySummary = document.getElementById('adsTreaterSummary');
   var preview = null;
   var uploadHistory = [];
+  var excludedChannels = [];
   var registeredAccounts = [];
   var monthNames = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   monthSelect.innerHTML = monthNames.map(function (name, index) { return '<option value="' + (index + 1) + '">' + name + '</option>'; }).join('');
@@ -40,7 +41,8 @@
 
   function refreshAccountOptions() {
     var platform = platformSelect.value;
-    var accounts = registeredAccounts.filter(function (item) { return item.marketplace === platform; });
+    var excluded=new Set(excludedChannels.map(function(item){return clean(item.platform).toLowerCase()+'\u001f'+clean(item.account).toLowerCase();}));
+    var accounts = registeredAccounts.filter(function (item) { return item.marketplace === platform&& !excluded.has(clean(item.marketplace).toLowerCase()+'\u001f'+clean(item.account).toLowerCase()); });
     accountSelect.innerHTML = '<option value="">Selecione a conta</option>' + accounts.map(function (item) {
       return '<option value="' + escapeHtml(item.account) + '">' + escapeHtml(item.account) + '</option>';
     }).join('');
@@ -151,7 +153,8 @@
     summary.textContent=info?'Dias disponíveis em '+label+': '+info.days.join(', '):'Nenhum dia tratado em '+label+'.';
   }
   function renderHistory(){
-    var accounts=[],seen=new Set();registeredAccounts.forEach(function(item){var key=item.marketplace+'\u001f'+item.account;if(!item.account||seen.has(key))return;seen.add(key);accounts.push(item);});
+    var excluded=new Set(excludedChannels.map(function(item){return clean(item.platform).toLowerCase()+'\u001f'+clean(item.account).toLowerCase();}));
+    var accounts=[],seen=new Set();registeredAccounts.forEach(function(item){var key=item.marketplace+'\u001f'+item.account,normalizedKey=clean(item.marketplace).toLowerCase()+'\u001f'+clean(item.account).toLowerCase();if(!item.account||seen.has(key)||excluded.has(normalizedKey))return;seen.add(key);accounts.push(item);});
     historySummary.textContent=accounts.length.toLocaleString('pt-BR')+' conta(s) · '+uploadHistory.length.toLocaleString('pt-BR')+' subida(s)';
     if(!accounts.length){historyBox.innerHTML='<div class="ads-treater-empty">Nenhuma conta cadastrada. Cadastre primeiro no Tratador de Vendas.</div>';return;}
     var now=new Date(),defaultYear=now.getFullYear(),monthOptions=monthNames.map(function(name,index){return '<option value="'+(index+1)+'"'+(index===now.getMonth()?' selected':'')+'>'+name+'</option>';}).join('');
@@ -163,10 +166,10 @@
         return '<details class="ads-account-month'+(rows.length?' is-filled':'')+'"><summary><span><strong>'+name+' / '+year+'</strong><small>'+(rows.length?rows.length+' subida(s)':'Ainda não alimentado')+'</small></span><i aria-hidden="true">⌄</i></summary><div class="ads-account-month-content">'+(rows.length?rows.map(uploadMarkup).join(''):'<p>Nenhum arquivo cadastrado neste mês.</p>')+'</div></details>';
       }).join('');
       var treatedCount=accountRows.filter(function(item){return item.status==='treated'||item.status==='published';}).length,currentInfo=treatedMonthInfo(accountRows,defaultYear,now.getMonth()+1),currentLabel=monthNames[now.getMonth()]+'/'+defaultYear;
-      return '<article class="ads-account-card" data-ads-account="'+escapeHtml(account.account)+'" data-ads-platform="'+escapeHtml(account.marketplace)+'" data-card-year="'+defaultYear+'"><header><div><span>'+escapeHtml(account.marketplace)+'</span><h3>'+escapeHtml(account.account)+'</h3></div><div class="ads-account-controls"><label>Mês<select data-card-month>'+monthOptions+'</select></label><label class="ads-card-file">Selecionar relatórios brutos<input data-card-file type="file" multiple accept=".xlsx,.xlsm,.xls,.csv,.zip,.txt"></label><button type="button" data-card-save>Tratar e salvar arquivos</button><button type="button" data-republish-selected'+(currentInfo?'':' disabled')+'>Republicar mês selecionado ('+currentLabel+')</button></div></header><div class="ads-account-meta">O dia é identificado automaticamente pelo nome de cada arquivo (ex.: 1.xlsx = dia 1). · '+accountRows.length+' subida(s) no disco · '+treatedCount+' tratada(s) · <span data-selected-month-info>'+(currentInfo?'Dias disponíveis em '+currentLabel+': '+currentInfo.days.join(', '):'Nenhum dia tratado em '+currentLabel+'.')+'</span></div><div class="ads-account-operation" data-account-status></div><h4 class="ads-monthly-title">Controle mensal de arquivos</h4><div class="ads-account-month-grid">'+months+'</div></article>';
+      return '<article class="ads-account-card" data-ads-account="'+escapeHtml(account.account)+'" data-ads-platform="'+escapeHtml(account.marketplace)+'" data-card-year="'+defaultYear+'"><header><div><span>'+escapeHtml(account.marketplace)+'</span><h3>'+escapeHtml(account.account)+'</h3></div><div class="ads-account-controls"><label>Mês<select data-card-month>'+monthOptions+'</select></label><label class="ads-card-file">Selecionar relatórios brutos<input data-card-file type="file" multiple accept=".xlsx,.xlsm,.xls,.csv,.zip,.txt"></label><button type="button" data-card-save>Tratar e salvar arquivos</button><button type="button" data-republish-selected'+(currentInfo?'':' disabled')+'>Republicar mês selecionado ('+currentLabel+')</button><button type="button" class="ads-delete-channel" data-delete-channel>Excluir canal</button></div></header><div class="ads-account-meta">O dia é identificado automaticamente pelo nome de cada arquivo (ex.: 1.xlsx = dia 1). · '+accountRows.length+' subida(s) no disco · '+treatedCount+' tratada(s) · <span data-selected-month-info>'+(currentInfo?'Dias disponíveis em '+currentLabel+': '+currentInfo.days.join(', '):'Nenhum dia tratado em '+currentLabel+'.')+'</span></div><div class="ads-account-operation" data-account-status></div><h4 class="ads-monthly-title">Controle mensal de arquivos</h4><div class="ads-account-month-grid">'+months+'</div></article>';
     }).join('');
   }
-  async function loadHistory(){try{var response=await fetch('/api/ads-treater/uploads',{cache:'no-store'}),result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível carregar o histórico.');uploadHistory=result.uploads||[];renderHistory();}catch(error){historyBox.innerHTML='<div class="ads-treater-empty">'+escapeHtml(error.message)+'</div>';historySummary.textContent='Falha ao carregar';}}
+  async function loadHistory(){try{var response=await fetch('/api/ads-treater/uploads',{cache:'no-store'}),result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível carregar o histórico.');uploadHistory=result.uploads||[];excludedChannels=result.excludedChannels||[];refreshAccountOptions();renderHistory();}catch(error){historyBox.innerHTML='<div class="ads-treater-empty">'+escapeHtml(error.message)+'</div>';historySummary.textContent='Falha ao carregar';}}
   async function publishTreatedUpload(item,password){
     var treatedResponse=await fetch('/api/ads-treater/treated?id='+encodeURIComponent(item.id),{cache:'no-store'}),treated=await treatedResponse.json();
     if(!treatedResponse.ok)throw new Error(treated.error||'O resultado tratado da subida '+item.sequence+' não está disponível.');
@@ -220,6 +223,22 @@
     return { rows: rows, duplicateRows: duplicateRows, categories: categories, minDate: rows.map(function (r) { return r.date; }).sort()[0], maxDate: rows.map(function (r) { return r.date; }).sort().slice(-1)[0] };
   }
   historyBox.addEventListener('click',async function(event){
+    var deleteChannelButton=event.target.closest('[data-delete-channel]');
+    if(deleteChannelButton){
+      var deleteCard=deleteChannelButton.closest('.ads-account-card'),deleteAccount=deleteCard.getAttribute('data-ads-account'),deletePlatform=deleteCard.getAttribute('data-ads-platform'),deleteStatus=deleteCard.querySelector('[data-account-status]');
+      if(!confirm('Excluir o canal de ADS "'+deletePlatform+' - '+deleteAccount+'"?\n\nSerão removidos os arquivos brutos, os tratados e todas as linhas de ADS/Publicidade/Cliques desse canal em todos os meses. As vendas não serão alteradas.'))return;
+      var deletePassword=document.getElementById('adsUploadPassword').value||prompt('Informe a senha administrativa para confirmar a exclusão do canal de ADS:');
+      if(!deletePassword)return;
+      try{
+        deleteChannelButton.disabled=true;deleteStatus.textContent='Criando backup e excluindo o canal de ADS...';
+        var deleteResponse=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':deletePassword},body:JSON.stringify({action:'delete-channel',platform:deletePlatform,account:deleteAccount})}),deleteResult=await deleteResponse.json();
+        if(!deleteResponse.ok)throw new Error(deleteResult.error||'Não foi possível excluir o canal de ADS.');
+        uploadHistory=deleteResult.uploads||[];excludedChannels=deleteResult.excludedChannels||[];
+        refreshAccountOptions();renderHistory();
+        alert('Canal de ADS excluído. '+Number(deleteResult.deleted.removedUploads||0)+' arquivo(s) e '+Number(deleteResult.deleted.removedRows||0)+' linha(s) de ADS removidos. As vendas foram preservadas.');
+      }catch(error){deleteChannelButton.disabled=false;deleteStatus.textContent=error.message;alert(error.message);}
+      return;
+    }
     var bulkButton=event.target.closest('[data-republish-selected]');
     if(bulkButton){
       var bulkCard=bulkButton.closest('.ads-account-card'),bulkAccount=bulkCard.getAttribute('data-ads-account'),bulkPlatform=bulkCard.getAttribute('data-ads-platform'),bulkStatus=bulkCard.querySelector('[data-account-status]');
