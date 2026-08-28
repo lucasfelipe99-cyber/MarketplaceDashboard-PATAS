@@ -7,7 +7,7 @@
   container.innerHTML = '<div class="sales-upload-shell">' +
     '<section class="ads-treater-panel"><div class="ads-treater-head"><div><span class="sales-upload-eyebrow">CONSTRUÇÃO DA BASE · ADS</span><h2>Tratador de Arquivos de ADS</h2><p>O arquivo bruto fica salvo no disco persistente. Depois, o tratador converte os dados para as colunas oficiais e somente o resultado tratado pode alimentar a Base de Dados e os painéis.</p></div><span class="sales-upload-badge">/var/data</span></div>' +
     '<div class="ads-data-flow"><span class="active">1. Arquivo bruto</span><b>→</b><span>2. Tratamento</span><b>→</b><span>3. Base de Dados</span><b>→</b><span>4. Dashboard</span></div>' +
-    '<div class="ads-treater-toolbar"><strong>Contas cadastradas no Tratador de Vendas</strong><span id="adsTreaterSummary">Carregando contas e histórico...</span></div>' +
+    '<div class="ads-treater-toolbar"><div><strong>Contas cadastradas no Tratador de Vendas</strong><span id="adsTreaterSummary">Carregando contas e histórico...</span></div><button id="adsReloadTreaters" type="button">↻ Recarregar tratadores</button></div>' +
     '<div id="adsTreaterHistory" class="ads-account-cards"></div></section>' +
     '<div class="sales-upload-heading"><div><span class="sales-upload-eyebrow">Integração de publicidade</span>' +
     '<h2>Subir Base de ADS Actual</h2><p>A nova carga substitui integralmente o ADS anterior da conta e do mês selecionados, sem alterar as linhas de vendas.</p></div>' +
@@ -166,7 +166,7 @@
         return '<details class="ads-account-month'+(rows.length?' is-filled':'')+'"><summary><span><strong>'+name+' / '+year+'</strong><small>'+(rows.length?rows.length+' subida(s)':'Ainda não alimentado')+'</small></span><i aria-hidden="true">⌄</i></summary><div class="ads-account-month-content">'+(rows.length?rows.map(uploadMarkup).join(''):'<p>Nenhum arquivo cadastrado neste mês.</p>')+'</div></details>';
       }).join('');
       var treatedCount=accountRows.filter(function(item){return item.status==='treated'||item.status==='published';}).length,currentInfo=treatedMonthInfo(accountRows,defaultYear,now.getMonth()+1),currentLabel=monthNames[now.getMonth()]+'/'+defaultYear;
-      return '<article class="ads-account-card" data-ads-account="'+escapeHtml(account.account)+'" data-ads-platform="'+escapeHtml(account.marketplace)+'" data-card-year="'+defaultYear+'"><header><div><span>'+escapeHtml(account.marketplace)+'</span><h3>'+escapeHtml(account.account)+'</h3></div><div class="ads-account-controls"><label>Mês<select data-card-month>'+monthOptions+'</select></label><label class="ads-card-file">Selecionar relatórios brutos<input data-card-file type="file" multiple accept=".xlsx,.xlsm,.xls,.csv,.zip,.txt"></label><button type="button" data-card-save>Tratar e salvar arquivos</button><button type="button" data-republish-selected'+(currentInfo?'':' disabled')+'>Republicar mês selecionado ('+currentLabel+')</button><button type="button" class="ads-delete-channel" data-delete-channel>Excluir canal</button></div></header><div class="ads-account-meta">O dia é identificado automaticamente pelo nome de cada arquivo (ex.: 1.xlsx = dia 1). · '+accountRows.length+' subida(s) no disco · '+treatedCount+' tratada(s) · <span data-selected-month-info>'+(currentInfo?'Dias disponíveis em '+currentLabel+': '+currentInfo.days.join(', '):'Nenhum dia tratado em '+currentLabel+'.')+'</span></div><div class="ads-account-operation" data-account-status></div><h4 class="ads-monthly-title">Controle mensal de arquivos</h4><div class="ads-account-month-grid">'+months+'</div></article>';
+      return '<article class="ads-account-card" data-ads-account="'+escapeHtml(account.account)+'" data-ads-platform="'+escapeHtml(account.marketplace)+'" data-sales-channel-id="'+escapeHtml(account.channelId||'')+'" data-card-year="'+defaultYear+'"><header><div><span>'+escapeHtml(account.marketplace)+'</span><h3>'+escapeHtml(account.account)+'</h3></div><div class="ads-account-controls"><label>Mês<select data-card-month>'+monthOptions+'</select></label><label class="ads-card-file">Selecionar relatórios brutos<input data-card-file type="file" multiple accept=".xlsx,.xlsm,.xls,.csv,.zip,.txt"></label><button type="button" data-card-save>Tratar e salvar arquivos</button><button type="button" data-republish-selected'+(currentInfo?'':' disabled')+'>Republicar mês selecionado ('+currentLabel+')</button><button type="button" class="ads-delete-channel" data-delete-channel>Excluir canal</button></div></header><div class="ads-account-meta">Vinculado ao Tratador de Vendas · O dia é identificado automaticamente pelo nome de cada arquivo (ex.: 1.xlsx = dia 1). · '+accountRows.length+' subida(s) no disco · '+treatedCount+' tratada(s) · <span data-selected-month-info>'+(currentInfo?'Dias disponíveis em '+currentLabel+': '+currentInfo.days.join(', '):'Nenhum dia tratado em '+currentLabel+'.')+'</span></div><div class="ads-account-operation" data-account-status></div><h4 class="ads-monthly-title">Controle mensal de arquivos</h4><div class="ads-account-month-grid">'+months+'</div></article>';
     }).join('');
   }
   async function loadHistory(){try{var response=await fetch('/api/ads-treater/uploads',{cache:'no-store'}),result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível carregar o histórico.');uploadHistory=result.uploads||[];excludedChannels=result.excludedChannels||[];refreshAccountOptions();renderHistory();}catch(error){historyBox.innerHTML='<div class="ads-treater-empty">'+escapeHtml(error.message)+'</div>';historySummary.textContent='Falha ao carregar';}}
@@ -255,7 +255,7 @@
       return;
     }
     if(event.target.matches('[data-card-save]')){
-      var accountCard=event.target.closest('.ads-account-card'),button=event.target,account=accountCard.getAttribute('data-ads-account'),platform=accountCard.getAttribute('data-ads-platform'),year=Number(accountCard.getAttribute('data-card-year'))||new Date().getFullYear(),month=Number(accountCard.querySelector('[data-card-month]').value),files=Array.from(accountCard.querySelector('[data-card-file]').files||[]),password=document.getElementById('adsUploadPassword').value,accountStatus=accountCard.querySelector('[data-account-status]');
+      var accountCard=event.target.closest('.ads-account-card'),button=event.target,account=accountCard.getAttribute('data-ads-account'),platform=accountCard.getAttribute('data-ads-platform'),salesChannelId=accountCard.getAttribute('data-sales-channel-id')||'',year=Number(accountCard.getAttribute('data-card-year'))||new Date().getFullYear(),month=Number(accountCard.querySelector('[data-card-month]').value),files=Array.from(accountCard.querySelector('[data-card-file]').files||[]),password=document.getElementById('adsUploadPassword').value,accountStatus=accountCard.querySelector('[data-account-status]');
       try{
         if(!files.length)throw new Error('Selecione um ou mais arquivos diários de ADS desta conta.');
         if(!password)throw new Error('Informe a senha administrativa no painel abaixo.');
@@ -272,7 +272,7 @@
             transformed.rows.forEach(function(row){row.date=selectedDate;});
             transformed.minDate=selectedDate;transformed.maxDate=selectedDate;
           }
-          var response=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'add',platform:platform,account:account,year:year,month:month,day:day,fileName:file.name,dataBase64:await fileBase64(file)})}),result=await response.json();
+          var response=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'add',platform:platform,account:account,salesChannelId:salesChannelId,year:year,month:month,day:day,fileName:file.name,dataBase64:await fileBase64(file)})}),result=await response.json();
           if(!response.ok)throw new Error(result.error||'Não foi possível salvar "'+file.name+'".');
           if(transformed){
             var treatedResponse=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'save-treated',id:result.upload.id,rows:transformed.rows})}),treatedResult=await treatedResponse.json();
@@ -295,6 +295,18 @@
     if(event.target.closest('[data-add-upload]')){try{var password=document.getElementById('adsUploadPassword').value||prompt('Informe a senha administrativa para republicar esta base de ADS:');if(!password)return;statusBox.textContent='Carregando o resultado tratado da subida '+item.sequence+'...';var result=await publishTreatedUpload(item,password);statusBox.innerHTML='<strong>Arquivo tratado publicado</strong><br>'+result.added.toLocaleString('pt-BR')+' linhas adicionadas à Base de Dados e disponibilizadas aos painéis.';await loadHistory();}catch(error){statusBox.textContent=error.message;alert(error.message);}return;}
   });
   historyBox.addEventListener('change',function(event){if(event.target.matches('[data-card-month]'))updateSelectedMonth(event.target.closest('.ads-account-card'));});
+  document.getElementById('adsReloadTreaters').onclick=async function(){
+    var button=this,password=document.getElementById('adsUploadPassword').value||prompt('Informe a senha administrativa para sincronizar os canais de ADS:');
+    if(!password)return;
+    try{
+      button.disabled=true;button.textContent='↻ Sincronizando...';historySummary.textContent='Recarregando canais e vínculos...';
+      var response=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'sync-channels'})}),result=await response.json();
+      if(!response.ok)throw new Error(result.error||'Não foi possível sincronizar os tratadores.');
+      registeredAccounts=Array.isArray(result.accounts)?result.accounts:[];uploadHistory=result.uploads||[];excludedChannels=result.excludedChannels||[];
+      refreshAccountOptions();renderHistory();
+      alert('Tratadores recarregados. '+Number(result.synchronized.accounts||0)+' conta(s) vinculada(s) pelo mesmo nome e plataforma.');
+    }catch(error){historySummary.textContent=error.message;alert(error.message);}finally{button.disabled=false;button.textContent='↻ Recarregar tratadores';}
+  };
   document.getElementById('adsUploadRead').onclick = async function () {
     try {
       var file = fileInput.files[0]; if (!file) throw new Error('Selecione o arquivo de ADS.');

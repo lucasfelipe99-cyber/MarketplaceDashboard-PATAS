@@ -1237,7 +1237,7 @@ function getRegisteredMarketplaceAccounts() {
     const account = String(channel.channelName || '').trim();
     if (!marketplace || !account) return;
     const key = normalizeAdsText(marketplace) + '||' + normalizeAdsText(account);
-    accounts.set(key, { marketplace, account, source: 'sales-treater' });
+    accounts.set(key, { marketplace, account, channelId: String(channel.id || ''), source: 'sales-treater' });
   });
   Object.values(months).forEach((month) => {
     if (!month || !month.rowsName) return;
@@ -1461,6 +1461,81 @@ function adsChannelKey(platform, account) {
   return normalizeAdsText(platform) + '||' + normalizeAdsText(account);
 }
 
+function synchronizeAdsChannels(state) {
+  const canonicalAccounts = getRegisteredMarketplaceAccounts().filter((item) => item.source === 'sales-treater');
+  const byKey = new Map(canonicalAccounts.map((item) => [adsChannelKey(item.marketplace, item.account), item]));
+  const byId = new Map(canonicalAccounts.filter((item) => item.channelId).map((item) => [String(item.channelId), item]));
+  const renamedKeys = new Map();
+  let linkedUploads = 0;
+  let renamedUploads = 0;
+  state.uploads.forEach((item) => {
+    const oldKey = adsChannelKey(item.platform, item.account);
+    const canonical = (item.salesChannelId && byId.get(String(item.salesChannelId))) || byKey.get(oldKey);
+    if (!canonical) return;
+    if (item.platform !== canonical.marketplace || item.account !== canonical.account) {
+      renamedKeys.set(oldKey, canonical);
+      item.platform = canonical.marketplace;
+      item.account = canonical.account;
+      renamedUploads += 1;
+    }
+    if (canonical.channelId && item.salesChannelId !== canonical.channelId) {
+      item.salesChannelId = canonical.channelId;
+      linkedUploads += 1;
+    }
+  });
+  state.excludedChannels.forEach((item) => {
+    const canonical = (item.salesChannelId && byId.get(String(item.salesChannelId))) || byKey.get(adsChannelKey(item.platform, item.account));
+    if (!canonical) return;
+    item.platform = canonical.marketplace;
+    item.account = canonical.account;
+    if (canonical.channelId) item.salesChannelId = canonical.channelId;
+  });
+
+  let renamedRows = 0;
+  if (renamedKeys.size) {
+    const metadata = readMetadata();
+    const months = metadata.areas && metadata.areas.area1 && metadata.areas.area1.months || {};
+    Object.values(months).forEach((monthMetadata) => {
+      if (!monthMetadata || !monthMetadata.rowsName) return;
+      const rowsPath = resolveDataFilePath(monthMetadata.rowsName);
+      if (!rowsPath || !fs.existsSync(rowsPath)) return;
+      const saved = JSON.parse(fs.readFileSync(rowsPath, 'utf8'));
+      const rows = Array.isArray(saved.rows) ? saved.rows : [];
+      if (rows.length < 2 || !Array.isArray(rows[0])) return;
+      const normalizedHeader = rows[0].map(normalizeAdsText);
+      const indexes = {
+        marketplace: normalizedHeader.indexOf('marketplace'), sale: normalizedHeader.indexOf('marketplace venda'),
+        category: normalizedHeader.indexOf('categoria'),
+        subcategory: Math.max(normalizedHeader.indexOf('sub categoria'), normalizedHeader.indexOf('subcategoria'))
+      };
+      if (Object.values(indexes).some((index) => index < 0)) return;
+      let changed = false;
+      rows.slice(1).forEach((row) => {
+        if (!isAdsMetricRow(row, indexes)) return;
+        const canonical = renamedKeys.get(adsChannelKey(row[indexes.marketplace], row[indexes.sale]));
+        if (!canonical) return;
+        row[indexes.marketplace] = canonical.marketplace;
+        row[indexes.sale] = canonical.account;
+        renamedRows += 1;
+        changed = true;
+      });
+      if (changed) {
+        writeJsonWithRetry(rowsPath, saved);
+        monthMetadata.rowsUpdatedAt = new Date().toISOString();
+      }
+    });
+    writeJsonWithRetry(metadataPath, metadata);
+  }
+  state.counters = {};
+  state.uploads.forEach((item) => {
+    const counterKey = [item.platform, item.account, item.year, item.month, item.day].join('||');
+    state.counters[counterKey] = Math.max(Number(state.counters[counterKey]) || 0, Number(item.sequence) || 0);
+  });
+  state.updatedAt = new Date().toISOString();
+  writeJsonWithRetry(adsUploadHistoryPath, state);
+  return { accounts: canonicalAccounts.length, linkedUploads, renamedUploads, renamedRows };
+}
+
 function deleteAdsChannelData(platform, account, state) {
   const channelKey = adsChannelKey(platform, account);
   const now = new Date().toISOString();
@@ -1578,6 +1653,16 @@ async function handleAdsTreaterUploads(request, response) {
     const payload = await collectJsonRequest(request, maxUploadBytes);
     const action = String(payload.action || 'add');
     const state = readAdsUploadHistory();
+    if (action === 'sync-channels') {
+      const synchronized = synchronizeAdsChannels(state);
+      sendJson(response, 200, {
+        synchronized,
+        uploads: state.uploads.map(publicAdsUpload),
+        excludedChannels: state.excludedChannels,
+        accounts: getRegisteredMarketplaceAccounts()
+      });
+      return;
+    }
     if (action === 'delete-channel') {
       const platform = String(payload.platform || '').trim();
       const account = String(payload.account || '').trim();
@@ -1632,6 +1717,7 @@ async function handleAdsTreaterUploads(request, response) {
     }
     const platform = String(payload.platform || '').trim();
     const account = String(payload.account || '').trim();
+    const salesChannelId = String(payload.salesChannelId || '').trim();
     const year = Number(payload.year), month = Number(payload.month), day = Number(payload.day);
     const fileName = path.basename(String(payload.fileName || '').trim());
     const extension = path.extname(fileName).toLowerCase();
@@ -1656,7 +1742,7 @@ async function handleAdsTreaterUploads(request, response) {
     const storedName = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}-${String(sequence).padStart(3, '0')}-${id}${extension}`;
     fs.writeFileSync(path.join(adsUploadFilesDir, storedName), bytes);
     const now = new Date().toISOString();
-    const item = { id, platform, account, year, month, day, sequence, fileName, storedName, size: bytes.length, uploadedAt: now, treatedName: null, treatedAt: null, treatedRows: 0, addedToBaseAt: null };
+    const item = { id, platform, account, salesChannelId, year, month, day, sequence, fileName, storedName, size: bytes.length, uploadedAt: now, treatedName: null, treatedAt: null, treatedRows: 0, addedToBaseAt: null };
     state.uploads.push(item);
     state.uploads.sort((a, b) => b.year - a.year || b.month - a.month || b.day - a.day || b.sequence - a.sequence);
     state.updatedAt = now;
