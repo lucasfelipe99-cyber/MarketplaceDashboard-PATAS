@@ -1279,6 +1279,8 @@ async function handleAdsBaseUpload(request, response) {
     const platform = String(payload.platform || '').trim();
     const platformKey = normalizeAdsText(platform);
     const account = String(payload.account || '').trim();
+    const marketplaceSale = adsMarketplaceSaleName(platform, account);
+    const marketplaceSaleKey = normalizeAdsText(marketplaceSale);
     const incomingRows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!month || !account || !['mercado livre', 'shopee'].includes(platformKey)) {
       sendJson(response, 400, { error: 'Selecione um mês e uma plataforma válidos.' });
@@ -1330,7 +1332,8 @@ async function handleAdsBaseUpload(request, response) {
 
     const accountIsRegistered = savedRows.slice(1).some((row) => {
       const samePlatform = normalizeAdsText(row[indexes.marketplace]) === platformKey;
-      const sameAccount = indexes.sale >= 0 && normalizeAdsText(row[indexes.sale]) === normalizeAdsText(account);
+      const savedSale = indexes.sale >= 0 ? normalizeAdsText(row[indexes.sale]) : '';
+      const sameAccount = savedSale === marketplaceSaleKey || savedSale === normalizeAdsText(account);
       const actual = normalizeAdsText(row[indexes.datatype]) !== 'forecast';
       return samePlatform && sameAccount && actual && !isAdsMetricRow(row, indexes);
     });
@@ -1363,7 +1366,7 @@ async function handleAdsBaseUpload(request, response) {
     const uniqueIncomingRows = [];
     const incomingIndexes = new Map();
     incomingRows.forEach((row) => {
-      const key = [platformKey, normalizeAdsText(account), normalizeAdsText(row.ad), adsDateKey(row.date),
+      const key = [platformKey, marketplaceSaleKey, normalizeAdsText(row.ad), adsDateKey(row.date),
         normalizeAdsText(row.category), normalizeAdsText(row.subcategory)].join('||');
       if (incomingIndexes.has(key)) uniqueIncomingRows[incomingIndexes.get(key)] = row;
       else { incomingIndexes.set(key, uniqueIncomingRows.length); uniqueIncomingRows.push(row); }
@@ -1383,12 +1386,14 @@ async function handleAdsBaseUpload(request, response) {
     // anúncio, conta e data para permitir a republicação sem duplicidade.
     const keptRows = savedRows.slice(1);
     let replaced = 0;
-    const incomingMetricKeys = new Set(uniqueIncomingRows.map((source) => [platformKey, normalizeAdsText(account),
+    const incomingMetricKeys = new Set(uniqueIncomingRows.map((source) => [platformKey, marketplaceSaleKey,
       normalizeAdsText(source.ad), adsDateKey(source.date), normalizeAdsText(source.category), normalizeAdsText(source.subcategory)].join('||')));
     for (let index = keptRows.length - 1; index >= 0; index -= 1) {
       const row = keptRows[index];
       if (!isAdsMetricRow(row, indexes)) continue;
-      const key = [normalizeAdsText(row[indexes.marketplace]), normalizeAdsText(row[indexes.sale]),
+      const rowSaleKey = normalizeAdsText(row[indexes.sale]) === normalizeAdsText(account)
+        ? marketplaceSaleKey : normalizeAdsText(row[indexes.sale]);
+      const key = [normalizeAdsText(row[indexes.marketplace]), rowSaleKey,
         indexes.ad >= 0 ? normalizeAdsText(row[indexes.ad]) : '', adsDateKey(row[indexes.date]),
         normalizeAdsText(row[indexes.category]), normalizeAdsText(row[indexes.subcategory])].join('||');
       if (incomingMetricKeys.has(key)) { keptRows.splice(index, 1); replaced += 1; }
@@ -1399,11 +1404,12 @@ async function handleAdsBaseUpload(request, response) {
       const row = new Array(header.length).fill('');
       const date = adsDateKey(source.date);
       const sourceAd = String(source.ad || '').trim();
-      const knownByAd = adData.get(normalizeAdsText(account) + '||' + normalizeAdsText(sourceAd)) || {};
+      const knownByAd = adData.get(marketplaceSaleKey + '||' + normalizeAdsText(sourceAd)) ||
+        adData.get(normalizeAdsText(account) + '||' + normalizeAdsText(sourceAd)) || {};
       const sku = String(source.sku || knownByAd.sku || '').trim();
       const known = skuData.get(normalizeAdsText(sku)) || knownByAd;
       row[indexes.marketplace] = platform;
-      if (indexes.sale >= 0) row[indexes.sale] = account;
+      if (indexes.sale >= 0) row[indexes.sale] = marketplaceSale;
       row[indexes.sku] = sku;
       if (indexes.ad >= 0) row[indexes.ad] = sourceAd;
       row[indexes.date] = date;
@@ -1461,6 +1467,15 @@ function adsChannelKey(platform, account) {
   return normalizeAdsText(platform) + '||' + normalizeAdsText(account);
 }
 
+function adsMarketplaceSaleName(platform, account) {
+  const marketplace = String(platform || '').trim();
+  const channel = String(account || '').trim();
+  if (!marketplace) return channel;
+  if (!channel || normalizeAdsText(channel) === normalizeAdsText(marketplace)) return marketplace;
+  if (normalizeAdsText(channel).startsWith(normalizeAdsText(marketplace) + ' ')) return channel;
+  return marketplace + ' - ' + channel;
+}
+
 function synchronizeAdsChannels(state) {
   const canonicalAccounts = getRegisteredMarketplaceAccounts().filter((item) => item.source === 'sales-treater');
   const byKey = new Map(canonicalAccounts.map((item) => [adsChannelKey(item.marketplace, item.account), item]));
@@ -1473,6 +1488,8 @@ function synchronizeAdsChannels(state) {
     const oldKey = adsChannelKey(item.platform, item.account);
     const canonical = (item.salesChannelId && byId.get(String(item.salesChannelId))) || byKey.get(oldKey);
     if (!canonical) return;
+    renamedKeys.set(adsChannelKey(item.platform, item.account), canonical);
+    renamedKeys.set(adsChannelKey(item.platform, adsMarketplaceSaleName(item.platform, item.account)), canonical);
     if (item.platform !== canonical.marketplace || item.account !== canonical.account) {
       renamedKeys.set(oldKey, canonical);
       item.platform = canonical.marketplace;
@@ -1521,7 +1538,7 @@ function synchronizeAdsChannels(state) {
         const canonical = renamedKeys.get(adsChannelKey(row[indexes.marketplace], row[indexes.sale]));
         if (!canonical) return;
         row[indexes.marketplace] = canonical.marketplace;
-        row[indexes.sale] = canonical.account;
+        row[indexes.sale] = adsMarketplaceSaleName(canonical.marketplace, canonical.account);
         renamedRows += 1;
         changed = true;
       });
@@ -1544,6 +1561,7 @@ function synchronizeAdsChannels(state) {
 
 function deleteAdsChannelData(platform, account, state) {
   const channelKey = adsChannelKey(platform, account);
+  const publishedChannelKey = adsChannelKey(platform, adsMarketplaceSaleName(platform, account));
   const now = new Date().toISOString();
   const stamp = now.replace(/[:.]/g, '-');
   const safeChannel = (normalizeAdsText(platform + '-' + account).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'canal').slice(0, 80);
@@ -1589,7 +1607,8 @@ function deleteAdsChannelData(platform, account, state) {
     };
     if (Object.values(indexes).some((index) => index < 0)) return;
     const kept = rows.slice(1).filter((row) => {
-      const matchesChannel = adsChannelKey(row[indexes.marketplace], row[indexes.sale]) === channelKey;
+      const rowChannelKey = adsChannelKey(row[indexes.marketplace], row[indexes.sale]);
+      const matchesChannel = rowChannelKey === channelKey || rowChannelKey === publishedChannelKey;
       const remove = matchesChannel && isAdsMetricRow(row, indexes);
       if (remove) removedRows += 1;
       return !remove;

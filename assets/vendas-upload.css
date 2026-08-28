@@ -265,6 +265,14 @@
 .ads-treater-toolbar>button { border:1px solid rgba(79,140,255,.55); border-radius:10px; background:linear-gradient(135deg,rgba(79,140,255,.18),rgba(40,199,184,.12)); color:#79a9ff; padding:10px 16px; font-weight:900; cursor:pointer; }
 .ads-treater-toolbar>button:hover:not(:disabled) { border-color:var(--accent); background:rgba(79,140,255,.24); }
 .ads-treater-toolbar>button:disabled { opacity:.55; cursor:wait; }
+.database-rebuild-bar { display:grid; grid-template-columns:minmax(280px,1fr) auto; align-items:center; gap:10px 22px; margin-bottom:18px; border:1px solid rgba(255,184,75,.48); border-radius:15px; background:linear-gradient(135deg,rgba(255,184,75,.08),rgba(79,140,255,.07)); padding:16px 18px; }
+.database-rebuild-bar>div { display:grid; gap:5px; }
+.database-rebuild-bar strong { color:var(--text); font-size:.95rem; }
+.database-rebuild-bar span,.database-rebuild-bar small { color:var(--text-muted); font-size:.75rem; }
+.database-rebuild-bar small { grid-column:1/-1; }
+.database-rebuild-bar button { border:1px solid rgba(255,184,75,.72); border-radius:10px; background:rgba(255,184,75,.13); color:#f5b84b; padding:11px 17px; font-weight:900; cursor:pointer; }
+.database-rebuild-bar button:hover:not(:disabled) { background:rgba(255,184,75,.23); }
+.database-rebuild-bar button:disabled { opacity:.55; cursor:wait; }
 .ads-treater-history { margin-top:15px; display:grid; gap:15px; }
 .ads-history-month { border-top:1px solid var(--border); padding-top:13px; }
 .ads-history-month h3 { margin:0 0 10px; font-size:.95rem; }
@@ -322,4 +330,4 @@
 @media(max-width:1200px){.ads-treater-controls{grid-template-columns:repeat(3,minmax(0,1fr))}.ads-history-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
 @media(max-width:1500px){.ads-account-card>header{align-items:stretch;flex-direction:column}.ads-account-controls{width:100%;max-width:none}}
 @media(max-width:1050px){.ads-account-controls{grid-template-columns:120px minmax(260px,1fr)}.ads-account-controls button{width:100%}.ads-account-month-grid{grid-template-columns:repeat(3,minmax(200px,1fr))}}
-@media(max-width:700px){.ads-treater-head,.ads-treater-toolbar{align-items:stretch;flex-direction:column}.ads-treater-controls,.ads-history-grid,.ads-account-controls,.ads-account-month-grid{grid-template-columns:1fr}.ads-card-file,.ads-account-controls [data-republish-selected]{grid-column:auto;width:100%;min-width:0}.ads-account-controls button{white-space:normal}.ads-account-month summary{min-height:58px}}
+@media(max-width:700px){.ads-treater-head,.ads-treater-toolbar{align-items:stretch;flex-direction:column}.ads-treater-controls,.ads-history-grid,.ads-account-controls,.ads-account-month-grid,.database-rebuild-bar{grid-template-columns:1fr}.database-rebuild-bar button{width:100%}.ads-card-file,.ads-account-controls [data-republish-selected]{grid-column:auto;width:100%;min-width:0}.ads-account-controls button{white-space:normal}.ads-account-month summary{min-height:58px}}

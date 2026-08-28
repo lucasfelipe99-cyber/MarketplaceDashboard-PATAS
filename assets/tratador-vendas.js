@@ -249,9 +249,10 @@
     return target;
   }
   function compatibleRows(rows){return appendCompatibleRows([],rows);}
-  async function refreshAllPublishedBases(button,status){
-    if(!confirm('Retratar e republicar todos os meses de todas as contas? O CMV e a margem serao recalculados com o cadastro de custos atual.'))return;
-    var password=prompt('Informe a senha administrativa para atualizar todas as bases:');
+  async function refreshAllPublishedBases(button,status,options){
+    options=options||{};
+    if(!options.confirmed&&!confirm('Retratar e republicar todos os meses de todas as contas? O CMV e a margem serao recalculados com o cadastro de custos atual.'))return;
+    var password=options.password||prompt('Informe a senha administrativa para atualizar todas as bases:');
     if(password===null)return;
     if(!password)return alert('Informe a senha administrativa.');
     var original=button.textContent;
@@ -286,9 +287,17 @@
       var published=await window.salesBaseIntegration.publishPrepared(password,false);
       if(published===false)throw new Error('Nao foi possivel concluir a publicacao das bases.');
       status.textContent=updatedMonths+' tratamento(s), '+updatedRows.toLocaleString('pt-BR')+' vendas recalculadas e republicadas com o CMV atual. Backup: '+clearResult.backup+'.';
-      alert('Atualizacao concluida. Todas as contas foram mantidas e o CMV foi recalculado em '+updatedMonths+' tratamento(s).');
-    }catch(error){status.textContent=error.message;alert(error.message);}finally{button.disabled=false;button.textContent=original;}
+      if(!options.silent)alert('Atualizacao concluida. Todas as contas foram mantidas e o CMV foi recalculado em '+updatedMonths+' tratamento(s).');
+      return {updatedMonths:updatedMonths,updatedRows:updatedRows,backup:clearResult.backup};
+    }catch(error){status.textContent=error.message;if(options.silent)throw error;alert(error.message);}finally{button.disabled=false;button.textContent=original;}
   }
+  window.salesTreatersIntegration={
+    rebuildAll:function(password,onProgress){
+      var virtualButton={disabled:false,textContent:'Retratar todas as bases'};
+      var virtualStatus={set textContent(value){if(typeof onProgress==='function')onProgress(value);},get textContent(){return '';}};
+      return refreshAllPublishedBases(virtualButton,virtualStatus,{confirmed:true,password:password,silent:true});
+    }
+  };
   function formatDateBr(value){var match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return match?match[3]+'/'+match[2]+'/'+match[1]:'—';}
   function formatDateTimeBr(value){var date=new Date(value);return Number.isNaN(date.getTime())?'—':date.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});}
   function historyHtml(channel){

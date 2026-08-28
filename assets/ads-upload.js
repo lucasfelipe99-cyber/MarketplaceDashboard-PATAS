@@ -333,5 +333,32 @@
       setTimeout(function () { window.location.reload(); }, 900);
     } catch (error) { statusBox.textContent = error.message; publishButton.disabled = false; publishButton.textContent = 'Adicionar à Base de Dados'; }
   };
+  window.adsBaseIntegration={
+    republishAll:async function(password,onProgress){
+      await loadHistory();
+      var rows=uploadHistory.filter(function(item){return item.status==='treated'||item.status==='published';})
+        .sort(function(a,b){return Number(a.year)-Number(b.year)||Number(a.month)-Number(b.month)||Number(a.day)-Number(b.day)||Number(a.sequence)-Number(b.sequence);});
+      var total=0,retreated=0;
+      for(var index=0;index<rows.length;index+=1){
+        var item=rows[index];
+        if(typeof onProgress==='function')onProgress('Retratando ADS · '+item.platform+' - '+item.account+' · '+monthNames[Number(item.month)-1]+'/'+item.year+' · dia '+item.day+' ('+(index+1)+' de '+rows.length+')...');
+        if(item.platform==='Mercado Livre'){
+          var rawResponse=await fetch('/api/ads-treater/file?id='+encodeURIComponent(item.id),{cache:'no-store'});
+          if(!rawResponse.ok)throw new Error('O arquivo bruto da subida '+item.sequence+' do dia '+item.day+' não está disponível para retratamento.');
+          var rawFile=new File([await rawResponse.blob()],item.fileName||('ads-'+item.day+'.xlsx'));
+          var transformed=parseMercadoLivreRaw(await readRawWorkbook(rawFile),item.account);
+          var selectedDate=[item.year,String(item.month).padStart(2,'0'),String(item.day).padStart(2,'0')].join('-');
+          transformed.rows.forEach(function(row){row.date=selectedDate;});
+          var saveResponse=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'save-treated',id:item.id,rows:transformed.rows})}),saveResult=await saveResponse.json();
+          if(!saveResponse.ok)throw new Error(saveResult.error||'Não foi possível salvar o novo tratamento de ADS.');
+          retreated+=1;
+        }
+        if(typeof onProgress==='function')onProgress('Republicando ADS · '+item.platform+' - '+item.account+' · dia '+item.day+' ('+(index+1)+' de '+rows.length+')...');
+        var result=await publishTreatedUpload(item,password);total+=Number(result.added)||0;
+      }
+      await loadHistory();
+      return {uploads:rows.length,rows:total,retreated:retreated};
+    }
+  };
   loadHistory();
 })();

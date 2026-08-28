@@ -4830,6 +4830,11 @@
 
     <!-- Aba com a tabela completa criada pelo JavaScript. -->
     <section class="tab-panel active" id="dataPanel">
+      <section class="database-rebuild-bar" aria-label="Reconstrução completa da base de dados">
+        <div><strong>Reconstrução completa</strong><span>Limpa a base consolidada, retrata todas as contas de Vendas e republica todos os arquivos tratados de ADS.</span></div>
+        <button id="rebuildAllDatabase" type="button">Limpar base e retratar tudo</button>
+        <small id="rebuildAllDatabaseStatus" aria-live="polite">Os arquivos tratados permanecem salvos em /var/data e um backup é criado antes da limpeza.</small>
+      </section>
       <!-- Status inicial e estatísticas após o upload. -->
       <section class="status-box" id="statusBox" aria-live="polite">
         <p class="status-message" id="statusMessage">Nenhuma base carregada ainda.</p>
@@ -14130,9 +14135,9 @@
         .replaceAll("'", '&#039;');
     }
   </script>
-  <script src="/assets/vendas-upload.js?v=23-20260821-identificadores"></script>
+  <script src="/assets/vendas-upload.js?v=24-20260828-rebuild-all"></script>
   <link rel="stylesheet" href="/assets/tratador-vendas.css?v=8-20260821-imposto-editavel">
-  <script src="/assets/tratador-vendas.js?v=24-20260821-imposto-editavel"></script>
+  <script src="/assets/tratador-vendas.js?v=25-20260828-rebuild-all"></script>
   <link rel="stylesheet" href="/assets/base-tratada-vendas.css?v=1-20260730">
   <script src="/assets/base-tratada-vendas.js?v=1-20260730"></script>
   <link rel="stylesheet" href="/assets/frete-combinar.css?v=1-20260730">
@@ -14140,7 +14145,7 @@
   <link rel="stylesheet" href="/assets/product-master.css?v=2">
   <script src="/assets/product-master.js?v=5"></script>
   <script src="/assets/fechamento.js?v=43-20260814-dre-required-totals"></script>
-  <script src="/assets/ads-upload.js?v=15-20260828-restore-ads-channel"></script>
+  <script src="/assets/ads-upload.js?v=16-20260828-canonical-account-rebuild"></script>
   <link rel="stylesheet" href="/assets/contas.css?v=7-20260814-daily-cash-flow">
   <script src="/assets/contas.js?v=10-20260814-daily-cash-flow"></script>
   <link rel="stylesheet" href="/assets/estoque.css?v=1">
@@ -14149,6 +14154,37 @@
   <script src="/assets/estoque-full.js?v=14-20260814-upload"></script>
   <link rel="stylesheet" href="/assets/calculadora-preco.css?v=10-20260821-clear-costs">
   <script src="/assets/calculadora-preco.js?v=17-20260821-pending-costs"></script>
+  <script>
+    (function () {
+      var button = document.getElementById('rebuildAllDatabase');
+      var status = document.getElementById('rebuildAllDatabaseStatus');
+      if (!button || !status) return;
+      button.addEventListener('click', async function () {
+        if (!confirm('ATENÇÃO: limpar a Base de Dados atual e reconstruir todos os meses com os tratamentos salvos de Vendas e ADS?\n\nUm backup automático será criado antes da limpeza.')) return;
+        var password = prompt('Informe a senha administrativa para reconstruir toda a Base de Dados:');
+        if (!password) return;
+        var original = button.textContent;
+        try {
+          button.disabled = true;
+          button.textContent = 'Reconstruindo...';
+          if (!window.salesTreatersIntegration || !window.adsBaseIntegration) throw new Error('Os tratadores ainda não terminaram de carregar. Atualize a página e tente novamente.');
+          status.textContent = 'Iniciando o retratamento completo de Vendas...';
+          var sales = await window.salesTreatersIntegration.rebuildAll(password, function (message) { status.textContent = message; });
+          status.textContent = 'Vendas reconstruídas. Republicando todas as bases tratadas de ADS...';
+          var ads = await window.adsBaseIntegration.republishAll(password, function (message) { status.textContent = message; });
+          status.textContent = 'Concluído: ' + sales.updatedMonths + ' tratamento(s) de Vendas e ' + ads.uploads + ' subida(s) de ADS republicados. Backup: ' + sales.backup + '.';
+          alert('Base de Dados reconstruída com sucesso. Vendas e ADS foram republicados com os nomes padronizados.');
+          setTimeout(function () { window.location.reload(); }, 1200);
+        } catch (error) {
+          status.textContent = error.message || 'Não foi possível reconstruir a Base de Dados.';
+          alert(status.textContent);
+        } finally {
+          button.disabled = false;
+          button.textContent = original;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 
