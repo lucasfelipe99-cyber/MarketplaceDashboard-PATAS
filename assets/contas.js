@@ -371,19 +371,26 @@
   function paymentHierarchy(records) {
     if (!records.length) return '<div class="daily-cash-empty">Nenhum pagamento previsto para este dia.</div>';
     var people = {}; (state.counterparties || []).forEach(function (item) { people[item.id] = item.name; });
-    var classifications = {};
+    var companies = {}; (state.companies || []).forEach(function (item) { companies[item.id] = item.name; });
+    var companyGroups = {};
     records.forEach(function (record) {
+      var company = companies[record.companyId] || 'Empresa não identificada';
       var classification = record.classification || 'Sem classificação';
       var category = record.category || 'Sem categoria';
       var person = people[record.counterpartyId] || 'Fornecedor não informado';
+      if (!companyGroups[company]) companyGroups[company] = { total: 0, classifications: {} };
+      var classifications = companyGroups[company].classifications;
       if (!classifications[classification]) classifications[classification] = { total: 0, categories: {} };
       if (!classifications[classification].categories[category]) classifications[classification].categories[category] = { total: 0, people: {} };
+      companyGroups[company].total += Math.abs(number(record.amount));
       classifications[classification].total += Math.abs(number(record.amount));
       classifications[classification].categories[category].total += Math.abs(number(record.amount));
       classifications[classification].categories[category].people[person] = (classifications[classification].categories[category].people[person] || 0) + Math.abs(number(record.amount));
     });
-    return '<div class="daily-cash-tree">' + Object.keys(classifications).sort().map(function (classification) {
-      var group = classifications[classification];
+    return '<div class="daily-cash-tree">' + Object.keys(companyGroups).sort().map(function (company) {
+      var companyGroup = companyGroups[company];
+      return '<details class="daily-cash-company-branch"><summary><span>' + esc(company) + '</span><strong>' + money.format(-companyGroup.total) + '</strong></summary><div>' + Object.keys(companyGroup.classifications).sort().map(function (classification) {
+      var group = companyGroup.classifications[classification];
       return '<details><summary><span>' + esc(classification) + '</span><strong>' + money.format(-group.total) + '</strong></summary><div>' +
         Object.keys(group.categories).sort().map(function (category) {
           var categoryGroup = group.categories[category];
@@ -392,6 +399,7 @@
               return '<div class="daily-cash-leaf"><span>' + esc(person) + '</span><strong>' + money.format(-categoryGroup.people[person]) + '</strong></div>';
             }).join('') + '</div></details>';
         }).join('') + '</div></details>';
+      }).join('') + '</div></details>';
     }).join('') + '</div>';
   }
 
@@ -421,6 +429,23 @@
     });
     var averageReceipt = selectedDailyConfigTotal('averageReceipt');
     var balance = selectedDailyConfigTotal('openingBalance');
+    var weekdayCount = 0;
+    for (var weekdayIndex = 0; weekdayIndex < 60; weekdayIndex += 1) {
+      var weekdayDate = new Date(start); weekdayDate.setDate(start.getDate() + weekdayIndex);
+      if (weekdayDate.getDay() >= 1 && weekdayDate.getDay() <= 5) weekdayCount += 1;
+    }
+    var visibleCompanies = (state.companies || []).filter(function (company) { return !dailyCashCompanyFilter || company.id === dailyCashCompanyFilter; });
+    var companyOverview = visibleCompanies.map(function (company) {
+      var config = dailyConfigFor(company.id);
+      var companyPayments = (state.payables || []).filter(function (record) {
+        if (record.status === 'settled' || record.companyId !== company.id) return false;
+        var shifted = shiftWeekendToMonday(record.dueDate);
+        return shifted >= isoLocalDate(start) && shifted <= isoLocalDate(end);
+      }).reduce(function (sum, record) { return sum + Math.abs(number(record.amount)); }, 0);
+      var companyEntries = number(config.averageReceipt) * weekdayCount;
+      var companyFinal = number(config.openingBalance) + companyEntries - companyPayments;
+      return '<article><span>' + esc(company.name) + '</span><small>Saldo inicial ' + money.format(number(config.openingBalance)) + '</small><small>Entradas ' + money.format(companyEntries) + ' · Saídas ' + money.format(-companyPayments) + '</small><strong class="' + (companyFinal >= 0 ? 'daily-positive' : 'daily-negative') + '">' + money.format(companyFinal) + '</strong></article>';
+    }).join('');
     var rows = []; var totalEntries = 0; var totalExits = 0;
     for (var index = 0; index < 60; index += 1) {
       var date = new Date(start); date.setDate(start.getDate() + index);
@@ -434,6 +459,7 @@
     }
     container.innerHTML = '<div class="accounts-shell daily-cash-shell"><div class="accounts-head"><div><h2>Fluxo de Caixa Dia a Dia</h2><p>Projeção móvel dos próximos 60 dias com recebimento médio e títulos em aberto do Contas a Pagar.</p></div><label class="daily-cash-filter">Empresa<select id="dailyCashCompanyFilter">' + dailyCashCompanyOptions(dailyCashCompanyFilter, true) + '</select></label></div>' +
       '<section class="accounts-card daily-cash-config"><div><h3>Configurar projeção</h3><p>O recebimento médio é lançado de segunda a sexta. Vencimentos no sábado ou domingo são transferidos para a segunda-feira.</p></div><form id="dailyCashConfigForm"><label>Empresa<select name="companyId" required>' + dailyCashCompanyOptions(dailyCashConfigCompany, false) + '</select></label><label>Recebimento médio por dia<input name="averageReceipt" inputmode="decimal" value="' + esc(selectedConfig.averageReceipt || '') + '" placeholder="R$ 0,00" required></label><label>Saldo inicial<input name="openingBalance" inputmode="decimal" value="' + esc(selectedConfig.openingBalance || '') + '" placeholder="R$ 0,00"></label><button class="accounts-primary" type="submit">Salvar configuração</button></form></section>' +
+      '<section class="daily-cash-company-overview">' + (companyOverview || '<div class="daily-cash-empty">Nenhuma empresa cadastrada.</div>') + '</section>' +
       '<section class="daily-cash-kpis"><article><span>Saldo inicial</span><strong>' + money.format(selectedDailyConfigTotal('openingBalance')) + '</strong></article><article><span>Entradas em 60 dias</span><strong class="daily-positive">' + money.format(totalEntries) + '</strong></article><article><span>Saídas previstas</span><strong class="daily-negative">' + money.format(-totalExits) + '</strong></article><article><span>Saldo final projetado</span><strong>' + money.format(balance) + '</strong></article></section>' +
       '<section class="accounts-card daily-cash-table-card"><div class="daily-cash-caption"><h3>Agenda financeira — 60 dias</h3><span>Somente contas a pagar não baixadas</span></div><div class="accounts-table-wrap"><table class="accounts-table daily-cash-table"><thead><tr><th>Data</th><th>Dia da semana</th><th>Entradas estimadas</th><th>Pagamentos</th><th>Fluxo líquido</th><th>Saldo final</th><th>Status</th></tr></thead><tbody>' + rows.join('') + '</tbody><tfoot><tr><th colspan="2">Total do período</th><th>' + money.format(totalEntries) + '</th><th>' + money.format(-totalExits) + '</th><th>' + money.format(totalEntries - totalExits) + '</th><th>' + money.format(balance) + '</th><th></th></tr></tfoot></table></div></section></div>';
     document.getElementById('dailyCashCompanyFilter').addEventListener('change', function () { dailyCashCompanyFilter = this.value; renderDailyCashFlow(); });
