@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "publish:clients": "git push origin HEAD:main && git push patas HEAD:main"
+    "publish:clients": "git push origin HEAD:main && git push click HEAD:main && git push inova HEAD:main"
   },
   "engines": {
     "node": ">=18"
