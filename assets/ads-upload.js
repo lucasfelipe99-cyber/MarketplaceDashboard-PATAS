@@ -132,6 +132,30 @@
     var dates=Array.from(aggregate.values()).map(function(item){return item.date;}).sort();
     return{rows:rows,sourceRows:sourceRows,ads:aggregate.size,duplicatesConsolidated:sourceRows-aggregate.size,minDate:dates[0],maxDate:dates[dates.length-1]};
   }
+  function parseShopeeRaw(matrix,account){
+    if(!matrix||!matrix.length)throw new Error('O relatório de ADS da Shopee está vazio.');
+    var normalized=matrix.map(function(row){return (row||[]).map(function(value){return clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ');});});
+    var headerIndex=normalized.findIndex(function(row){return row.indexOf('nome do anuncio')>=0&&row.indexOf('cliques')>=0&&row.indexOf('gmv')>=0&&row.indexOf('despesas')>=0;});
+    if(headerIndex<0)throw new Error('As colunas Nome do Anúncio, Cliques, GMV e Despesas não foram encontradas no relatório da Shopee.');
+    var headers=normalized[headerIndex];
+    function column(name){return headers.indexOf(name);}
+    var idx={name:column('nome do anuncio'),ad:column('id do produto'),clicks:column('cliques'),revenue:column('gmv'),investment:column('despesas')};
+    var aggregate=new Map(),sourceRows=0;
+    matrix.slice(headerIndex+1).forEach(function(row){
+      var productId=clean(row[idx.ad]),name=clean(row[idx.name]),ad=productId&&productId!=='-'?productId:name;
+      if(!ad)return;
+      sourceRows+=1;
+      var key=[account,ad].join('\u001f'),current=aggregate.get(key)||{ad:ad,revenue:0,investment:0,clicks:0,sourceRows:0};
+      current.revenue+=numberValue(row[idx.revenue]);current.investment+=numberValue(row[idx.investment]);current.clicks+=numberValue(row[idx.clicks]);current.sourceRows+=1;aggregate.set(key,current);
+    });
+    if(!aggregate.size)throw new Error('Nenhum anúncio válido foi encontrado no relatório da Shopee.');
+    var rows=[];aggregate.forEach(function(item){
+      rows.push({marketplace:'Shopee',marketplaceSale:account,sku:'',ad:item.ad,date:'',category:'ADS F',subcategory:'ADS F',value:item.revenue});
+      rows.push({marketplace:'Shopee',marketplaceSale:account,sku:'',ad:item.ad,date:'',category:'03.Despesas Marketplace',subcategory:'Publicidade',value:-Math.abs(item.investment)});
+      rows.push({marketplace:'Shopee',marketplaceSale:account,sku:'',ad:item.ad,date:'',category:'Cliques',subcategory:'Cliques',value:item.clicks});
+    });
+    return{rows:rows,sourceRows:sourceRows,ads:aggregate.size,duplicatesConsolidated:sourceRows-aggregate.size,minDate:'',maxDate:''};
+  }
   function fileBase64(file) { return file.arrayBuffer().then(function(buffer){var bytes=new Uint8Array(buffer),chunk=0x8000,binary='';for(var i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk));return btoa(binary);}); }
   function formatBytes(value){var n=Number(value)||0;return n<1024?n+' B':n<1048576?(n/1024).toLocaleString('pt-BR',{maximumFractionDigits:1})+' KB':(n/1048576).toLocaleString('pt-BR',{maximumFractionDigits:1})+' MB';}
   function dateTime(value){if(!value)return '—';return new Date(value).toLocaleString('pt-BR');}
@@ -182,8 +206,17 @@
   function dayFromFileName(fileName,year,month){
     var base=String(fileName||'').replace(/\.[^.]+$/,'').trim();
     var match=base.match(/^(\d{1,2})(?:\D|$)/);
-    if(!match)throw new Error('O arquivo "'+fileName+'" precisa começar com o dia do mês. Exemplo: 1.xlsx.');
-    var day=Number(match[1]),lastDay=new Date(Number(year),Number(month),0).getDate();
+    var day=match?Number(match[1]):0;
+    if(!day){
+      var dates=Array.from(base.matchAll(/(?:^|\D)(\d{1,2})[_-](\d{1,2})[_-](\d{4})(?=\D|$)/g));
+      if(dates.length){
+        var reportDate=dates[dates.length-1];
+        if(Number(reportDate[2])!==Number(month)||Number(reportDate[3])!==Number(year))throw new Error('A data no nome do arquivo "'+fileName+'" não pertence ao mês selecionado.');
+        day=Number(reportDate[1]);
+      }
+    }
+    if(!day)throw new Error('Não foi possível identificar o dia em "'+fileName+'". Use 1.xlsx ou mantenha a data DD_MM_AAAA no nome exportado.');
+    var lastDay=new Date(Number(year),Number(month),0).getDate();
     if(day<1||day>lastDay)throw new Error('O dia '+day+' do arquivo "'+fileName+'" não é válido para o mês selecionado.');
     return day;
   }
@@ -266,8 +299,8 @@
           var current=prepared[fileIndex],file=current.file,day=current.day,transformed=null;
           button.textContent='Tratando '+(fileIndex+1)+' de '+prepared.length+'...';
           accountStatus.textContent='Dia '+day+' · '+file.name;
-          if(platform==='Mercado Livre'){
-            transformed=parseMercadoLivreRaw(await readRawWorkbook(file),account);
+          if(platform==='Mercado Livre'||platform==='Shopee'){
+            transformed=platform==='Mercado Livre'?parseMercadoLivreRaw(await readRawWorkbook(file),account):parseShopeeRaw(await readWorkbook(file),account);
             var selectedDate=[year,String(month).padStart(2,'0'),String(day).padStart(2,'0')].join('-');
             transformed.rows.forEach(function(row){row.date=selectedDate;});
             transformed.minDate=selectedDate;transformed.maxDate=selectedDate;
@@ -281,7 +314,7 @@
           }else uploadHistory=result.uploads||[];
           completed+=1;
         }
-        var successMessage=completed+' arquivo(s) salvo(s) com sucesso. '+(platform==='Mercado Livre'?totalAds.toLocaleString('pt-BR')+' anúncios e '+totalRows.toLocaleString('pt-BR')+' linhas tratadas.':'Prontos para configurar o tratamento.')+' Dias identificados pelo nome dos arquivos.';
+        var successMessage=completed+' arquivo(s) salvo(s) com sucesso. '+totalAds.toLocaleString('pt-BR')+' anúncios e '+totalRows.toLocaleString('pt-BR')+' linhas tratadas. Dias identificados pelo nome dos arquivos.';
         accountStatus.innerHTML='<strong>'+successMessage+'</strong>';
         accountCard.querySelector('[data-card-file]').value='';
         renderHistory();
@@ -342,11 +375,11 @@
       for(var index=0;index<rows.length;index+=1){
         var item=rows[index];
         if(typeof onProgress==='function')onProgress('Retratando ADS · '+item.platform+' - '+item.account+' · '+monthNames[Number(item.month)-1]+'/'+item.year+' · dia '+item.day+' ('+(index+1)+' de '+rows.length+')...');
-        if(item.platform==='Mercado Livre'){
+        if(item.platform==='Mercado Livre'||item.platform==='Shopee'){
           var rawResponse=await fetch('/api/ads-treater/file?id='+encodeURIComponent(item.id),{cache:'no-store'});
           if(!rawResponse.ok)throw new Error('O arquivo bruto da subida '+item.sequence+' do dia '+item.day+' não está disponível para retratamento.');
           var rawFile=new File([await rawResponse.blob()],item.fileName||('ads-'+item.day+'.xlsx'));
-          var transformed=parseMercadoLivreRaw(await readRawWorkbook(rawFile),item.account);
+          var transformed=item.platform==='Mercado Livre'?parseMercadoLivreRaw(await readRawWorkbook(rawFile),item.account):parseShopeeRaw(await readWorkbook(rawFile),item.account);
           var selectedDate=[item.year,String(item.month).padStart(2,'0'),String(item.day).padStart(2,'0')].join('-');
           transformed.rows.forEach(function(row){row.date=selectedDate;});
           var saveResponse=await fetch('/api/ads-treater/uploads',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Password':password},body:JSON.stringify({action:'save-treated',id:item.id,rows:transformed.rows})}),saveResult=await saveResponse.json();
